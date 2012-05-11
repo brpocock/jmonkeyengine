@@ -57,7 +57,7 @@ public class MobileCompositeProvider implements ProjectCustomizer.CompositeCateg
     private class SavePropsListener implements ActionListener {
 
         private String extensionName = "mobile";
-        private String extensionVersion = "v0.16";
+        private String extensionVersion = "v0.17";
         private String[] extensionDependencies = new String[]{"jar", "-mobile-deployment"};
         private ProjectExtensionManager manager = new ProjectExtensionManager(extensionName, extensionVersion, extensionDependencies);
         private ProjectExtensionProperties properties;
@@ -66,7 +66,7 @@ public class MobileCompositeProvider implements ProjectCustomizer.CompositeCateg
         public SavePropsListener(ProjectExtensionProperties props, Project project) {
             this.properties = props;
             this.project = project;
-            manager.setAntTaskLibrary("jme3-android");
+            manager.setAntTaskLibrary("android-base");
         }
 
         public void actionPerformed(ActionEvent e) {

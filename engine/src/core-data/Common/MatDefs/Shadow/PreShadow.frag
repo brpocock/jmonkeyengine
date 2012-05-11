@@ -1,15 +1,24 @@
 varying vec2 texCoord;
 
-#ifdef DIFFUSEMAP_ALPHA
-uniform sampler2D m_DiffuseMap;
+
+#ifdef COLOR_MAP
+  uniform sampler2D m_ColorMap;
+#endif 
+#ifdef DIFFUSEMAP
+  uniform sampler2D m_DiffuseMap;
 #endif
+   
 
 
 void main(){
-   #ifdef DIFFUSEMAP_ALPHA
-      if (texture2D(m_DiffuseMap, texCoord).a <= 0.50)
-          discard;
-   #endif
+    float a = 1.0;
+    
+    #ifdef COLOR_MAP
+        a = texture2D(m_ColorMap, texCoord).a;
+    #endif    
+    #ifdef DIFFUSEMAP
+        a = texture2D(m_DiffuseMap, texCoord).a;
+    #endif
 
-   gl_FragColor = vec4(1.0);
+   gl_FragColor = vec4(a);
 }

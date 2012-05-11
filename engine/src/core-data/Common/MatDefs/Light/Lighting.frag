@@ -55,8 +55,6 @@ varying vec3 SpecularSum;
   uniform sampler2D m_ColorRamp;
 #endif
 
-uniform float m_AlphaDiscardThreshold;
-
 #ifndef VERTEX_LIGHTING
 uniform float m_Shininess;
 
@@ -126,6 +124,10 @@ vec2 computeLighting(in vec3 wvNorm, in vec3 wvViewDir, in vec3 wvLightDir){
     float att = vLightDir.w;
    #endif
 
+   if (m_Shininess <= 1.0) {
+       specularFactor = 0.0; // should be one instruction on most cards ..
+   }
+
    specularFactor *= diffuseFactor;
 
    return vec2(diffuseFactor, specularFactor) * vec2(att);
@@ -167,10 +169,7 @@ void main(){
     float alpha = DiffuseSum.a * diffuseColor.a;
     #ifdef ALPHAMAP
        alpha = alpha * texture2D(m_AlphaMap, newTexCoord).r;
-    #endif
-    if(alpha < m_AlphaDiscardThreshold){
-        discard;
-    }
+    #endif  
 
     #ifndef VERTEX_LIGHTING
         float spotFallOff = 1.0;
@@ -207,7 +206,7 @@ void main(){
     // ***********************
     #if defined(NORMALMAP) && !defined(VERTEX_LIGHTING)
       vec4 normalHeight = texture2D(m_NormalMap, newTexCoord);
-      vec3 normal = (normalHeight.xyz * vec3(2.0) - vec3(1.0));
+      vec3 normal = normalize((normalHeight.xyz * vec3(2.0) - vec3(1.0)));
       #ifdef LATC
         normal.z = sqrt(1.0 - (normal.x * normal.x) - (normal.y * normal.y));
       #endif
@@ -249,8 +248,9 @@ void main(){
     #else
        vec4 lightDir = vLightDir;
        lightDir.xyz = normalize(lightDir.xyz);
+       vec3 viewDir = normalize(vViewDir);
 
-       vec2   light = computeLighting(normal, vViewDir.xyz, lightDir.xyz) * spotFallOff;
+       vec2   light = computeLighting(normal, viewDir, lightDir.xyz) * spotFallOff;
        #ifdef COLORRAMP
            diffuseColor.rgb  *= texture2D(m_ColorRamp, vec2(light.x, 0.0)).rgb;
            specularColor.rgb *= texture2D(m_ColorRamp, vec2(light.y, 0.0)).rgb;

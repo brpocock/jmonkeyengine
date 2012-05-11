@@ -62,6 +62,30 @@ public class GeometryBatchFactory {
         }
     }
 
+    private static void doTransformTangents(FloatBuffer inBuf, int offset, int components, FloatBuffer outBuf, Matrix4f transform) {
+        Vector3f tan = new Vector3f();
+
+        // offset is given in element units
+        // convert to be in component units
+        offset *= components;
+
+        for (int i = 0; i < inBuf.capacity() / components; i++) {
+            tan.x = inBuf.get(i * components + 0);
+            tan.y = inBuf.get(i * components + 1);
+            tan.z = inBuf.get(i * components + 2);
+
+            transform.multNormal(tan, tan);
+
+            outBuf.put(offset + i * components + 0, tan.x);
+            outBuf.put(offset + i * components + 1, tan.y);
+            outBuf.put(offset + i * components + 2, tan.z);
+
+            if (components == 4) {
+                outBuf.put(offset + i * components + 3, inBuf.get(i * components + 3));
+            }
+        }
+    }
+
     /**
      * Merges all geometries in the collection into
      * the output mesh. Creates a new material using the TextureAtlas.
@@ -106,9 +130,9 @@ public class GeometryBatchFactory {
                     throw new UnsupportedOperationException();
             }
 
-            for (Entry<VertexBuffer> entry : geom.getMesh().getBuffers()) {
-                compsForBuf[entry.getKey()] = entry.getValue().getNumComponents();
-                formatForBuf[entry.getKey()] = entry.getValue().getFormat();
+            for (VertexBuffer vb : geom.getMesh().getBufferList().getArray()) {
+                compsForBuf[vb.getBufferType().ordinal()] = vb.getNumComponents();
+                formatForBuf[vb.getBufferType().ordinal()] = vb.getFormat();
             }
 
             if (mode != null && mode != listMode) {
@@ -178,18 +202,20 @@ public class GeometryBatchFactory {
                         }
                     }
                 } else if (Type.Position.ordinal() == bufType) {
-                    FloatBuffer inPos = (FloatBuffer) inBuf.getData();
+                    FloatBuffer inPos = (FloatBuffer) inBuf.getDataReadOnly();
                     FloatBuffer outPos = (FloatBuffer) outBuf.getData();
                     doTransformVerts(inPos, globalVertIndex, outPos, worldMatrix);
-                } else if (Type.Normal.ordinal() == bufType || Type.Tangent.ordinal() == bufType) {
-                    FloatBuffer inPos = (FloatBuffer) inBuf.getData();
+                } else if (Type.Normal.ordinal() == bufType) {
+                    FloatBuffer inPos = (FloatBuffer) inBuf.getDataReadOnly();
                     FloatBuffer outPos = (FloatBuffer) outBuf.getData();
                     doTransformNorms(inPos, globalVertIndex, outPos, worldMatrix);
+                } else if (Type.Tangent.ordinal() == bufType) {
+                    FloatBuffer inPos = (FloatBuffer) inBuf.getDataReadOnly();
+                    FloatBuffer outPos = (FloatBuffer) outBuf.getData();
+                    int components = inBuf.getNumComponents();
+                    doTransformTangents(inPos, globalVertIndex, components, outPos, worldMatrix);
                 } else {
-                    for (int vert = 0; vert < geomVertCount; vert++) {
-                        int curGlobalVertIndex = globalVertIndex + vert;
-                        inBuf.copyElement(vert, outBuf, curGlobalVertIndex);
-                    }
+                    inBuf.copyElements(0, outBuf, globalVertIndex, geomVertCount);
                 }
             }
 
@@ -229,8 +255,7 @@ public class GeometryBatchFactory {
                 numOfVertices = g.getVertexCount();
             }
             for (int i = 0; i < lodLevels; i++) {
-                ShortBuffer buffer = (ShortBuffer) g.getMesh().getLodLevel(i).getData();
-                buffer.rewind();
+                ShortBuffer buffer = (ShortBuffer) g.getMesh().getLodLevel(i).getDataReadOnly();
                 //System.out.println("buffer: " + buffer.capacity() + " limit: " + lodSize[i] + " " + index);
                 for (int j = 0; j < buffer.capacity(); j++) {
                     lodData[i][bufferPos[i] + j] = buffer.get() + numOfVertices * curGeom;
@@ -263,6 +288,14 @@ public class GeometryBatchFactory {
 
         for (Geometry geom : geometries) {
             List<Geometry> outList = matToGeom.get(geom.getMaterial());
+            if (outList == null) {
+                //trying to compare materials with the contentEquals method 
+                for (Material mat : matToGeom.keySet()) {
+                    if (geom.getMaterial().contentEquals(mat)){
+                        outList = matToGeom.get(mat);
+                    }
+                }
+            }
             if (outList == null) {
                 outList = new ArrayList<Geometry>();
                 matToGeom.put(geom.getMaterial(), outList);

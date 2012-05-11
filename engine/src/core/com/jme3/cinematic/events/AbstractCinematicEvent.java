@@ -39,8 +39,6 @@ import com.jme3.export.InputCapsule;
 import com.jme3.export.JmeExporter;
 import com.jme3.export.JmeImporter;
 import com.jme3.export.OutputCapsule;
-import com.jme3.system.NanoTimer;
-import com.jme3.system.Timer;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,12 +57,8 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
     protected float initialDuration = 10;
     protected LoopMode loopMode = LoopMode.DontLoop;
     protected float time = 0;
-    protected Timer timer;
-    protected float start = 0;
-    /**
-     * the last time the event was paused
-     */
-    protected float elapsedTimePause = 0;
+    protected boolean resuming = false;
+    
     /**
      * the list of listeners
      */
@@ -106,14 +100,8 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
      * Play this event
      */
     public void play() {
-        onPlay();
+        onPlay();        
         playState = PlayState.Playing;
-        if (timer == null) {
-            //only when used as a control
-            timer = new NanoTimer();
-        }
-        start = timer.getTimeInSeconds();
-        //timer.reset();
         if (listeners != null) {
             for (int i = 0; i < listeners.size(); i++) {
                 CinematicEventListener cel = listeners.get(i);
@@ -133,8 +121,7 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
      */
     public void internalUpdate(float tpf) {
         if (playState == PlayState.Playing) {
-            time = (elapsedTimePause + timer.getTimeInSeconds() - start) * speed;
-
+            time = time + (tpf * speed);         
             onUpdate(tpf);
             if (time >= initialDuration && loopMode == loopMode.DontLoop) {
                 stop();
@@ -156,7 +143,6 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
         onStop();
         time = 0;
         playState = PlayState.Stopped;
-        elapsedTimePause = 0;
         if (listeners != null) {
             for (int i = 0; i < listeners.size(); i++) {
                 CinematicEventListener cel = listeners.get(i);
@@ -176,7 +162,6 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
     public void pause() {
         onPause();
         playState = PlayState.Paused;
-        elapsedTimePause = time;
         if (listeners != null) {
             for (int i = 0; i < listeners.size(); i++) {
                 CinematicEventListener cel = listeners.get(i);
@@ -290,8 +275,6 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
      * @param cinematic 
      */
     public void initEvent(Application app, Cinematic cinematic) {
-        timer = app.getContext().getTimer();
-        //timer = new NanoTimer();
     }
 
     /**
@@ -326,17 +309,10 @@ public abstract class AbstractCinematicEvent implements CinematicEvent {
      * @param time the time to fast forward to
      */
     public void setTime(float time) {
-        elapsedTimePause = time/speed;
-        if(playState == PlayState.Playing){
-            start = timer.getTimeInSeconds();
-        }
+        this.time = time ;
     }
 
     public float getTime() {
         return time;
     }
-    
-    
-    
-    
 }

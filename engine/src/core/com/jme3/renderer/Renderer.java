@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2010 jMonkeyEngine
+ * Copyright (c) 2009-2012 jMonkeyEngine
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,6 +42,7 @@ import com.jme3.shader.Shader.ShaderSource;
 import com.jme3.texture.FrameBuffer;
 import com.jme3.texture.Image;
 import com.jme3.texture.Texture;
+import com.jme3.util.NativeObject;
 import java.nio.ByteBuffer;
 import java.util.EnumSet;
 
@@ -270,24 +271,24 @@ public interface Renderer {
     public void renderMesh(Mesh mesh, int lod, int count);
 
     /**
-     * Resets all previously used {@link GLObject}s on this Renderer.
-     * The state of the GLObjects is reset in such way, that using
+     * Resets all previously used {@link NativeObject Native Objects} on this Renderer.
+     * The state of the native objects is reset in such way, that using
      * them again will cause the renderer to reupload them.
      * Call this method when you know the GL context is going to shutdown.
      * 
-     * @see GLObject#resetObject() 
+     * @see NativeObject#resetObject() 
      */
     public void resetGLObjects();
 
     /**
-     * Deletes all previously used {@link GLObject}s on this Renderer, and
-     * then resets the GLObjects.
+     * Deletes all previously used {@link NativeObject Native Objects} on this Renderer, and
+     * then resets the native objects.
      * 
      * @see #resetGLObjects() 
-     * @see GLObject#deleteObject(com.jme3.renderer.Renderer) 
+     * @see NativeObject#deleteObject(com.jme3.renderer.Renderer) 
      */
     public void cleanup();
-
+    
     /**
      * Sets the alpha to coverage state.
      * <p>

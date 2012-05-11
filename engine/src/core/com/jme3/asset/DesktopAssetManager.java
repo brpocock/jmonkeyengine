@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2010 jMonkeyEngine
+ * Copyright (c) 2009-2012 jMonkeyEngine
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -32,7 +32,8 @@
 
 package com.jme3.asset;
 
-import com.jme3.asset.AssetCache.SmartAssetInfo;
+import com.jme3.asset.cache.AssetCache;
+import com.jme3.asset.cache.SimpleAssetCache;
 import com.jme3.audio.AudioData;
 import com.jme3.audio.AudioKey;
 import com.jme3.font.BitmapFont;
@@ -48,6 +49,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -60,15 +62,14 @@ import java.util.logging.Logger;
 public class DesktopAssetManager implements AssetManager {
 
     private static final Logger logger = Logger.getLogger(AssetManager.class.getName());
-
-    private final AssetCache cache = new AssetCache();
+    
     private final ImplHandler handler = new ImplHandler(this);
 
-    private AssetEventListener eventListener = null;
-    private List<ClassLoader> classLoaders;
-
-//    private final ThreadingManager threadingMan = new ThreadingManager(this);
-//    private final Set<AssetKey> alreadyLoadingSet = new HashSet<AssetKey>();
+    private CopyOnWriteArrayList<AssetEventListener> eventListeners = 
+            new CopyOnWriteArrayList<AssetEventListener>();
+    
+    private List<ClassLoader> classLoaders =
+            Collections.synchronizedList(new ArrayList<ClassLoader>());
 
     public DesktopAssetManager(){
         this(null);
@@ -81,44 +82,55 @@ public class DesktopAssetManager implements AssetManager {
 
     public DesktopAssetManager(URL configFile){
         if (configFile != null){
-            InputStream stream = null;
-            try{
-                AssetConfig cfg = new AssetConfig(this);
-                stream = configFile.openStream();
-                cfg.loadText(stream);
-            }catch (IOException ex){
-                logger.log(Level.SEVERE, "Failed to load asset config", ex);
-            }finally{
-                if (stream != null)
-                    try{
-                        stream.close();
-                    }catch (IOException ex){
-                    }
-            }
+            loadConfigFile(configFile);
         }
         logger.info("DesktopAssetManager created.");
     }
 
-    public void addClassLoader(ClassLoader loader){
-        if(classLoaders == null)
-            classLoaders = Collections.synchronizedList(new ArrayList<ClassLoader>());
-        synchronized(classLoaders) {
-            classLoaders.add(loader);
+    private void loadConfigFile(URL configFile){
+        InputStream stream = null;
+        try{
+            AssetConfig cfg = new AssetConfig(this);
+            stream = configFile.openStream();
+            cfg.loadText(stream);
+        }catch (IOException ex){
+            logger.log(Level.SEVERE, "Failed to load asset config", ex);
+        }finally{
+            if (stream != null)
+                try{
+                    stream.close();
+                }catch (IOException ex){
+                }
         }
     }
     
-    public void removeClassLoader(ClassLoader loader){
-        if(classLoaders != null) synchronized(classLoaders) {
-                classLoaders.remove(loader);
-            }
+    public void addClassLoader(ClassLoader loader) {
+        classLoaders.add(loader);
+    }
+    
+    public void removeClassLoader(ClassLoader loader) {
+        classLoaders.remove(loader);
     }
 
     public List<ClassLoader> getClassLoaders(){
-        return classLoaders;
+        return Collections.unmodifiableList(classLoaders);
+    }
+    
+    public void addAssetEventListener(AssetEventListener listener) {
+        eventListeners.add(listener);
+    }
+
+    public void removeAssetEventListener(AssetEventListener listener) {
+        eventListeners.remove(listener);
+    }
+
+    public void clearAssetEventListeners() {
+        eventListeners.clear();
     }
     
     public void setAssetEventListener(AssetEventListener listener){
-        eventListener = listener;
+        eventListeners.clear();
+        eventListeners.add(listener);
     }
 
     public void registerLoader(Class<? extends AssetLoader> loader, String ... extensions){
@@ -140,6 +152,14 @@ public class DesktopAssetManager implements AssetManager {
         }
         if (clazz != null){
             registerLoader(clazz, extensions);
+        }
+    }
+    
+    public void unregisterLoader(Class<? extends AssetLoader> loaderClass) {
+        handler.removeLoader(loaderClass);
+        if (logger.isLoggable(Level.FINER)){
+            logger.log(Level.FINER, "Unregistered loader: {0}",
+                    loaderClass.getSimpleName());
         }
     }
 
@@ -172,45 +192,53 @@ public class DesktopAssetManager implements AssetManager {
                     clazz.getSimpleName());
         }
     }
-
-    public void clearCache(){
-        cache.deleteAllAssets();
-    }
-
-    /**
-     * Delete an asset from the cache, returns true if it was deleted
-     * successfully.
-     * <br/><br/>
-     * <font color="red">Thread-safe.</font>
-     */
-    public boolean deleteFromCache(AssetKey key){
-        return cache.deleteFromCache(key);
-    }
-
-    /**
-     * Adds a resource to the cache.
-     * <br/><br/>
-     * <font color="red">Thread-safe.</font>
-     */
-    public void addToCache(AssetKey key, Object asset){
-        cache.addToCache(key, asset);
-    }
-
+    
     public AssetInfo locateAsset(AssetKey<?> key){
-        if (handler.getLocatorCount() == 0){
-            logger.warning("There are no locators currently"+
-                           " registered. Use AssetManager."+
-                           "registerLocator() to register a"+
-                           " locator.");
-            return null;
-        }
-
         AssetInfo info = handler.tryLocate(key);
         if (info == null){
             logger.log(Level.WARNING, "Cannot locate resource: {0}", key);
         }
-
         return info;
+    }
+    
+    public <T> T getFromCache(AssetKey<T> key) {
+        AssetCache cache = handler.getCache(key.getCacheType());
+        if (cache != null) {
+            T asset = cache.getFromCache(key);
+            if (asset != null) {
+                // Since getFromCache fills the load stack, it has to be popped
+                cache.notifyNoAssetClone();
+            }
+            return asset;
+        } else {
+            throw new IllegalArgumentException("Key " + key + " specifies no cache.");
+        }
+    }
+    
+    public <T> void addToCache(AssetKey<T> key, T asset) {
+        AssetCache cache = handler.getCache(key.getCacheType());
+        if (cache != null) {
+            cache.addToCache(key, asset);
+            cache.notifyNoAssetClone();
+        } else {
+            throw new IllegalArgumentException("Key " + key + " specifies no cache.");
+        }
+    }
+    
+    public <T> boolean deleteFromCache(AssetKey<T> key) {
+        AssetCache cache = handler.getCache(key.getCacheType());
+        if (cache != null) {
+            return cache.deleteFromCache(key);
+        } else {
+            throw new IllegalArgumentException("Key " + key + " specifies no cache.");
+        }
+    }
+    
+    public void clearCache(){
+        handler.clearCache();
+        if (logger.isLoggable(Level.FINER)){
+            logger.log(Level.FINER, "All asset caches cleared.");
+        }
     }
 
     /**
@@ -218,97 +246,89 @@ public class DesktopAssetManager implements AssetManager {
      *
      * @param <T>
      * @param key
-     * @return
+     * @return the loaded asset
      */
       public <T> T loadAsset(AssetKey<T> key){
         if (key == null)
             throw new IllegalArgumentException("key cannot be null");
         
-        if (eventListener != null)
-            eventListener.assetRequested(key);
-
-        AssetKey smartKey = null;
-        Object o = null;
-        if (key.shouldCache()){
-            if (key.useSmartCache()){
-                SmartAssetInfo smartInfo = cache.getFromSmartCache(key);
-                if (smartInfo != null){
-                    smartKey = smartInfo.smartKey.get();
-                    if (smartKey != null){
-                        o = smartInfo.asset;
-                    }
-                }
-            }else{
-                o = cache.getFromCache(key);
-            }
+        for (AssetEventListener listener : eventListeners){
+            listener.assetRequested(key);
         }
-        if (o == null){
+        
+        AssetCache cache = handler.getCache(key.getCacheType());
+        AssetProcessor proc = handler.getProcessor(key.getProcessorType());
+        
+        Object obj = cache != null ? cache.getFromCache(key) : null;
+        if (obj == null){
+            // Asset not in cache, load it from file system.
             AssetLoader loader = handler.aquireLoader(key);
-            if (loader == null){
-                throw new IllegalStateException("No loader registered for type \"" +
-                                                key.getExtension() + "\"");
-            }
-
-            if (handler.getLocatorCount() == 0){
-                throw new IllegalStateException("There are no locators currently"+
-                                                " registered. Use AssetManager."+
-                                                "registerLocator() to register a"+
-                                                " locator.");
-            }
-
             AssetInfo info = handler.tryLocate(key);
             if (info == null){
-                if (handler.getParentKey() != null && eventListener != null){
+                if (handler.getParentKey() != null){
                     // Inform event listener that an asset has failed to load.
                     // If the parent AssetLoader chooses not to propagate
                     // the exception, this is the only means of finding
                     // that something went wrong.
-                    eventListener.assetDependencyNotFound(handler.getParentKey(), key);
+                    for (AssetEventListener listener : eventListeners){
+                        listener.assetDependencyNotFound(handler.getParentKey(), key);
+                    }
                 }
                 throw new AssetNotFoundException(key.toString());
             }
 
             try {
                 handler.establishParentKey(key);
-                o = loader.load(info);
+                obj = loader.load(info);
             } catch (IOException ex) {
                 throw new AssetLoadException("An exception has occured while loading asset: " + key, ex);
             } finally {
                 handler.releaseParentKey(key);
             }
-            if (o == null){
-                throw new AssetLoadException("Error occured while loading asset \"" + key + "\" using" + loader.getClass().getSimpleName());
+            if (obj == null){
+                throw new AssetLoadException("Error occured while loading asset \"" + key + "\" using " + loader.getClass().getSimpleName());
             }else{
                 if (logger.isLoggable(Level.FINER)){
                     logger.log(Level.FINER, "Loaded {0} with {1}",
                             new Object[]{key, loader.getClass().getSimpleName()});
                 }
                 
-                // do processing on asset before caching
-                o = key.postProcess(o);
-
-                if (key.shouldCache())
-                    cache.addToCache(key, o);
-
-                if (eventListener != null)
-                    eventListener.assetLoaded(key);
+                if (proc != null){
+                    // do processing on asset before caching
+                    obj = proc.postProcess(key, obj);
+                }
+                
+                if (cache != null){
+                    // At this point, obj should be of type T
+                    cache.addToCache(key, (T) obj);
+                }
+                
+                for (AssetEventListener listener : eventListeners){
+                    listener.assetLoaded(key);
+                }
             }
         }
 
-        // object o is the asset
+        // object obj is the original asset
         // create an instance for user
-        T clone = (T) key.createClonedInstance(o);
-
-        if (key.useSmartCache()){
-            if (smartKey != null){
-                // smart asset was already cached, use original key
-                ((Asset)clone).setKey(smartKey);
+        T clone = (T) obj;
+        if (clone instanceof CloneableSmartAsset){
+            if (proc == null){
+                throw new IllegalStateException("Asset implements "
+                        + "CloneableSmartAsset but doesn't "
+                        + "have processor to handle cloning");
             }else{
-                // smart asset was cached on this call, use our key
-                ((Asset)clone).setKey(key);
+                clone = (T) proc.createClone(obj);
+                if (cache != null && clone != obj){
+                    cache.registerAssetClone(key, clone);
+                } else{
+                    throw new IllegalStateException("Asset implements "
+                        + "CloneableSmartAsset but doesn't have cache or "
+                        + "was not cloned");
+                }
             }
         }
-        
+       
         return clone;
     }
 
@@ -319,7 +339,7 @@ public class DesktopAssetManager implements AssetManager {
     /**
      * Loads a texture.
      *
-     * @return
+     * @return the texture
      */
     public Texture loadTexture(TextureKey key){
         return (Texture) loadAsset(key);
@@ -329,31 +349,12 @@ public class DesktopAssetManager implements AssetManager {
         return (Material) loadAsset(new MaterialKey(name));
     }
 
-    /**
-     * Loads a texture.
-     *
-     * @param name
-     * @param generateMipmaps Enable if applying texture to 3D objects, disable
-     * for GUI/HUD elements.
-     * @return
-     */
-    public Texture loadTexture(String name, boolean generateMipmaps){
-        TextureKey key = new TextureKey(name, true);
-        key.setGenerateMips(generateMipmaps);
-        key.setAsCube(false);
-        return loadTexture(key);
-    }
-
-    public Texture loadTexture(String name, boolean generateMipmaps, boolean flipY, boolean asCube, int aniso){
-        TextureKey key = new TextureKey(name, flipY);
-        key.setGenerateMips(generateMipmaps);
-        key.setAsCube(asCube);
-        key.setAnisotropy(aniso);
-        return loadTexture(key);
-    }
-
     public Texture loadTexture(String name){
-        return loadTexture(name, true);
+        TextureKey key = new TextureKey(name, true);
+        key.setGenerateMips(true);
+        Texture tex = loadTexture(key);
+        System.out.println(tex + " - " + tex.getMinFilter());
+        return tex;
     }
 
     public AudioData loadAudio(AudioKey key){
@@ -368,7 +369,7 @@ public class DesktopAssetManager implements AssetManager {
      * Loads a bitmap font with the given name.
      *
      * @param name
-     * @return
+     * @return the loaded {@link BitmapFont}
      */
     public BitmapFont loadFont(String name){
         return (BitmapFont) loadAsset(new AssetKey(name));
@@ -382,11 +383,12 @@ public class DesktopAssetManager implements AssetManager {
      * Load a vertex/fragment shader combo.
      *
      * @param key
-     * @return
+     * @return the loaded {@link Shader}
      */
     public Shader loadShader(ShaderKey key){
         // cache abuse in method
         // that doesn't use loaders/locators
+        AssetCache cache = handler.getCache(SimpleAssetCache.class);
         Shader s = (Shader) cache.getFromCache(key);
         if (s == null){
             String vertName = key.getVertName();
@@ -412,10 +414,9 @@ public class DesktopAssetManager implements AssetManager {
      * Load a model.
      *
      * @param name
-     * @return
+     * @return the loaded model
      */
     public Spatial loadModel(String name){
         return loadModel(new ModelKey(name));
     }
-    
 }

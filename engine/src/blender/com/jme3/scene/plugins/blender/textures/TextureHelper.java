@@ -31,10 +31,24 @@
  */
 package com.jme3.scene.plugins.blender.textures;
 
+import java.awt.color.ColorSpace;
+import java.awt.image.BufferedImage;
+import java.awt.image.ColorConvertOp;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import jme3tools.converters.ImageToAwt;
+import jme3tools.converters.RGB565;
+
+import com.jme3.asset.AssetManager;
+import com.jme3.asset.AssetNotFoundException;
+import com.jme3.asset.BlenderKey;
 import com.jme3.asset.BlenderKey.FeaturesToLoad;
-import com.jme3.asset.*;
-import com.jme3.math.ColorRGBA;
-import com.jme3.math.FastMath;
+import com.jme3.asset.GeneratedTextureKey;
+import com.jme3.asset.TextureKey;
 import com.jme3.math.Vector3f;
 import com.jme3.scene.plugins.blender.AbstractBlenderHelper;
 import com.jme3.scene.plugins.blender.BlenderContext;
@@ -43,27 +57,16 @@ import com.jme3.scene.plugins.blender.exceptions.BlenderFileException;
 import com.jme3.scene.plugins.blender.file.FileBlockHeader;
 import com.jme3.scene.plugins.blender.file.Pointer;
 import com.jme3.scene.plugins.blender.file.Structure;
-import com.jme3.scene.plugins.blender.materials.MaterialContext;
-import com.jme3.scene.plugins.blender.materials.MaterialHelper;
+import com.jme3.scene.plugins.blender.textures.generating.TextureGeneratorFactory;
+import com.jme3.scene.plugins.blender.textures.io.PixelIOFactory;
+import com.jme3.scene.plugins.blender.textures.io.PixelInputOutput;
 import com.jme3.texture.Image;
 import com.jme3.texture.Image.Format;
 import com.jme3.texture.Texture;
 import com.jme3.texture.Texture.MinFilter;
 import com.jme3.texture.Texture.WrapMode;
 import com.jme3.texture.Texture2D;
-import com.jme3.texture.Texture3D;
 import com.jme3.util.BufferUtils;
-import java.awt.color.ColorSpace;
-import java.awt.image.BufferedImage;
-import java.awt.image.ColorConvertOp;
-import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
-import jme3tools.converters.ImageToAwt;
 
 /**
  * A class that is used in texture calculations.
@@ -71,152 +74,107 @@ import jme3tools.converters.ImageToAwt;
  * @author Marcin Roguski
  */
 public class TextureHelper extends AbstractBlenderHelper {
-	private static final Logger	LOGGER				= Logger.getLogger(TextureHelper.class.getName());
+	private static final Logger		LOGGER				= Logger.getLogger(TextureHelper.class.getName());
 
 	// texture types
-	public static final int		TEX_NONE			= 0;
-	public static final int		TEX_CLOUDS			= 1;
-	public static final int		TEX_WOOD			= 2;
-	public static final int		TEX_MARBLE			= 3;
-	public static final int		TEX_MAGIC			= 4;
-	public static final int		TEX_BLEND			= 5;
-	public static final int		TEX_STUCCI			= 6;
-	public static final int		TEX_NOISE			= 7;
-	public static final int		TEX_IMAGE			= 8;
-	public static final int		TEX_PLUGIN			= 9;
-	public static final int		TEX_ENVMAP			= 10;
-	public static final int		TEX_MUSGRAVE		= 11;
-	public static final int		TEX_VORONOI			= 12;
-	public static final int		TEX_DISTNOISE		= 13;
-	public static final int 	TEX_POINTDENSITY 	= 14;//v. 25+
-	public static final int 	TEX_VOXELDATA 		= 15;//v. 25+
+	public static final int			TEX_NONE			= 0;
+	public static final int			TEX_CLOUDS			= 1;
+	public static final int			TEX_WOOD			= 2;
+	public static final int			TEX_MARBLE			= 3;
+	public static final int			TEX_MAGIC			= 4;
+	public static final int			TEX_BLEND			= 5;
+	public static final int			TEX_STUCCI			= 6;
+	public static final int			TEX_NOISE			= 7;
+	public static final int			TEX_IMAGE			= 8;
+	public static final int			TEX_PLUGIN			= 9;
+	public static final int			TEX_ENVMAP			= 10;
+	public static final int			TEX_MUSGRAVE		= 11;
+	public static final int			TEX_VORONOI			= 12;
+	public static final int			TEX_DISTNOISE		= 13;
+	public static final int			TEX_POINTDENSITY	= 14;												// v.
+																											// 25+
+	public static final int			TEX_VOXELDATA		= 15;												// v.
+																											// 25+
 
-	// mapto
-	public static final int		MAP_COL				= 1;
-	public static final int		MAP_NORM			= 2;
-	public static final int		MAP_COLSPEC			= 4;
-	public static final int		MAP_COLMIR			= 8;
-	public static final int		MAP_VARS			= 0xFFF0;
-	public static final int		MAP_REF				= 16;
-	public static final int		MAP_SPEC			= 32;
-	public static final int		MAP_EMIT			= 64;
-	public static final int		MAP_ALPHA			= 128;
-	public static final int		MAP_HAR				= 256;
-	public static final int		MAP_RAYMIRR			= 512;
-	public static final int		MAP_TRANSLU			= 1024;
-	public static final int		MAP_AMB				= 2048;
-	public static final int		MAP_DISPLACE		= 4096;
-	public static final int		MAP_WARP			= 8192;
-	public static final int		MAP_LAYER			= 16384;
-
-	// blendtypes
-	public static final int		MTEX_BLEND			= 0;
-	public static final int		MTEX_MUL			= 1;
-	public static final int		MTEX_ADD			= 2;
-	public static final int		MTEX_SUB			= 3;
-	public static final int		MTEX_DIV			= 4;
-	public static final int		MTEX_DARK			= 5;
-	public static final int		MTEX_DIFF			= 6;
-	public static final int		MTEX_LIGHT			= 7;
-	public static final int		MTEX_SCREEN			= 8;
-	public static final int		MTEX_OVERLAY		= 9;
-	public static final int		MTEX_BLEND_HUE		= 10;
-	public static final int		MTEX_BLEND_SAT		= 11;
-	public static final int		MTEX_BLEND_VAL		= 12;
-	public static final int		MTEX_BLEND_COLOR	= 13;
-	public static final int		MTEX_NUM_BLENDTYPES	= 14;
-
-	protected NoiseGenerator noiseGenerator;
-	private Map<Integer, TextureGenerator> textureGenerators = new HashMap<Integer, TextureGenerator>();
+	private TextureGeneratorFactory	textureGeneratorFactory;
 
 	/**
 	 * This constructor parses the given blender version and stores the result.
 	 * It creates noise generator and texture generators.
 	 * 
 	 * @param blenderVersion
-	 *        the version read from the blend file
+	 *            the version read from the blend file
 	 * @param fixUpAxis
-     *        a variable that indicates if the Y asxis is the UP axis or not
+	 *            a variable that indicates if the Y asxis is the UP axis or not
 	 */
 	public TextureHelper(String blenderVersion, boolean fixUpAxis) {
 		super(blenderVersion, false);
-		noiseGenerator = new NoiseGenerator(blenderVersion);
-		textureGenerators.put(Integer.valueOf(TEX_BLEND), new TextureGeneratorBlend(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_CLOUDS), new TextureGeneratorClouds(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_DISTNOISE), new TextureGeneratorDistnoise(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_MAGIC), new TextureGeneratorMagic(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_MARBLE), new TextureGeneratorMarble(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_MUSGRAVE), new TextureGeneratorMusgrave(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_NOISE), new TextureGeneratorNoise(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_STUCCI), new TextureGeneratorStucci(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_VORONOI), new TextureGeneratorVoronoi(noiseGenerator));
-		textureGenerators.put(Integer.valueOf(TEX_WOOD), new TextureGeneratorWood(noiseGenerator));
+		textureGeneratorFactory = new TextureGeneratorFactory(blenderVersion);
 	}
 
 	/**
-	 * This class returns a texture read from the file or from packed blender data. The returned texture has the name set to the value of
-	 * its blender type.
+	 * This class returns a texture read from the file or from packed blender
+	 * data. The returned texture has the name set to the value of its blender
+	 * type.
 	 * 
 	 * @param tex
-	 *        texture structure filled with data
+	 *            texture structure filled with data
 	 * @param blenderContext
-	 *        the blender context
+	 *            the blender context
 	 * @return the texture that can be used by JME engine
 	 * @throws BlenderFileException
-	 *         this exception is thrown when the blend file structure is somehow invalid or corrupted
+	 *             this exception is thrown when the blend file structure is
+	 *             somehow invalid or corrupted
 	 */
-	public Texture getTexture(Structure tex, BlenderContext blenderContext) throws BlenderFileException {
+	public Texture getTexture(Structure tex, Structure mTex, BlenderContext blenderContext) throws BlenderFileException {
 		Texture result = (Texture) blenderContext.getLoadedFeature(tex.getOldMemoryAddress(), LoadedFeatureDataType.LOADED_FEATURE);
 		if (result != null) {
 			return result;
 		}
 		int type = ((Number) tex.getFieldValue("type")).intValue();
-		int width = blenderContext.getBlenderKey().getGeneratedTextureWidth();
-		int height = blenderContext.getBlenderKey().getGeneratedTextureHeight();
-		int depth = blenderContext.getBlenderKey().getGeneratedTextureDepth();
 
 		switch (type) {
-		case TEX_IMAGE:// (it is first because probably this will be most commonly used)
-			Pointer pImage = (Pointer) tex.getFieldValue("ima");
-			if (pImage.isNotNull()){
-				Structure image = pImage.fetchData(blenderContext.getInputStream()).get(0);
-				result = this.getTextureFromImage(image, blenderContext);
-			}
-			break;
-		case TEX_CLOUDS:
-		case TEX_WOOD:
-		case TEX_MARBLE:
-		case TEX_MAGIC:
-		case TEX_BLEND:
-		case TEX_STUCCI:
-		case TEX_NOISE:
-		case TEX_MUSGRAVE:
-		case TEX_VORONOI:
-		case TEX_DISTNOISE:
-			TextureGenerator textureGenerator = textureGenerators.get(Integer.valueOf(type));
-			result = textureGenerator.generate(tex, width, height, depth, blenderContext);
-			break;
-		case TEX_NONE:// No texture, do nothing
-			break;
-		case TEX_POINTDENSITY:
-			LOGGER.warning("Point density texture loading currently not supported!");
-			break;
-		case TEX_VOXELDATA:
-			LOGGER.warning("Voxel data texture loading currently not supported!");
-			break;
-		case TEX_PLUGIN:
-		case TEX_ENVMAP:// TODO: implement envmap texture
-			LOGGER.log(Level.WARNING, "Unsupported texture type: {0} for texture: {1}", new Object[]{type, tex.getName()});
-			break;
-		default:
-			throw new BlenderFileException("Unknown texture type: " + type + " for texture: " + tex.getName());
+			case TEX_IMAGE:// (it is first because probably this will be most commonly used)
+				Pointer pImage = (Pointer) tex.getFieldValue("ima");
+				if (pImage.isNotNull()) {
+					Structure image = pImage.fetchData(blenderContext.getInputStream()).get(0);
+					result = this.getTextureFromImage(image, blenderContext);
+					this.applyColorbandAndColorFactors(tex, result.getImage(), blenderContext);
+				}
+				break;
+			case TEX_CLOUDS:
+			case TEX_WOOD:
+			case TEX_MARBLE:
+			case TEX_MAGIC:
+			case TEX_BLEND:
+			case TEX_STUCCI:
+			case TEX_NOISE:
+			case TEX_MUSGRAVE:
+			case TEX_VORONOI:
+			case TEX_DISTNOISE:
+				result = new GeneratedTexture(tex, mTex, textureGeneratorFactory.createTextureGenerator(type), blenderContext);
+				break;
+			case TEX_NONE:// No texture, do nothing
+				break;
+			case TEX_POINTDENSITY:
+				LOGGER.warning("Point density texture loading currently not supported!");
+				break;
+			case TEX_VOXELDATA:
+				LOGGER.warning("Voxel data texture loading currently not supported!");
+				break;
+			case TEX_PLUGIN:
+			case TEX_ENVMAP:
+				LOGGER.log(Level.WARNING, "Unsupported texture type: {0} for texture: {1}", new Object[] { type, tex.getName() });
+				break;
+			default:
+				throw new BlenderFileException("Unknown texture type: " + type + " for texture: " + tex.getName());
 		}
 		if (result != null) {
 			result.setName(tex.getName());
 			result.setWrap(WrapMode.Repeat);
 			// NOTE: Enable mipmaps FOR ALL TEXTURES EVER
 			result.setMinFilter(MinFilter.Trilinear);
-			if(type != TEX_IMAGE) {//only generated textures should have this key
+			if (type != TEX_IMAGE) {// only generated textures should have this key
 				result.setKey(new GeneratedTextureKey(tex.getName()));
 			}
 		}
@@ -224,444 +182,12 @@ public class TextureHelper extends AbstractBlenderHelper {
 	}
 
 	/**
-	 * This method blends the given texture with material color and the defined color in 'map to' panel. As a result of this method a new
-	 * texture is created. The input texture is NOT.
-	 * 
-	 * @param materialColor
-	 *        the material diffuse color
-	 * @param texture
-	 *        the texture we use in blending
-	 * @param color
-	 *        the color defined for the texture
-	 * @param affectFactor
-	 *        the factor that the color affects the texture (value form 0.0 to 1.0)
-	 * @param blendType
-	 *        the blending type
-	 * @param blenderContext
-	 *        the blender context
-	 * @return new texture that was created after the blending
-	 */
-	public Texture blendTexture(float[] materialColor, Texture texture, float[] color, float affectFactor, int blendType, boolean neg, BlenderContext blenderContext) {
-		float[] materialColorClone = materialColor.clone();//this array may change, so we copy it
-		Format format = texture.getImage().getFormat();
-		ByteBuffer data = texture.getImage().getData(0);
-		data.rewind();
-		int width = texture.getImage().getWidth();
-		int height = texture.getImage().getHeight();
-		int depth = texture.getImage().getDepth();
-		if(depth==0) {
-			depth = 1;
-		}
-		ByteBuffer newData = BufferUtils.createByteBuffer(width * height * depth * 4);
-
-		float[] resultPixel = new float[4];
-		int dataIndex = 0;
-		while (data.hasRemaining()) {
-			float tin = this.setupMaterialColor(data, format, neg, materialColorClone);
-			this.blendPixel(resultPixel, materialColorClone, color, tin, affectFactor, blendType, blenderContext);
-			newData.put(dataIndex++, (byte) (resultPixel[0] * 255.0f));
-			newData.put(dataIndex++, (byte) (resultPixel[1] * 255.0f));
-			newData.put(dataIndex++, (byte) (resultPixel[2] * 255.0f));
-			newData.put(dataIndex++, (byte) (materialColorClone[3] * 255.0f));
-		}
-		if(texture.getType()==Texture.Type.TwoDimensional) {
-			return new Texture2D(new Image(Format.RGBA8, width, height, newData));
-		} else {
-			ArrayList<ByteBuffer> dataArray = new ArrayList<ByteBuffer>(1);
-			dataArray.add(newData);
-			return new Texture3D(new Image(Format.RGBA8, width, height, depth, dataArray));
-		}
-	}
-
-	/**
-	 * This method merges the given textures. The result texture has no alpha
-	 * factor (is always opaque).
-	 * 
-	 * @param sources
-	 *            the textures to be merged
-	 * @param materialContext
-	 *            the context of the material
-	 * @return merged textures
-	 */
-	public Texture mergeTextures(List<Texture> sources, MaterialContext materialContext) {
-		Texture result = null;
-		if(sources!=null && sources.size()>0) {
-			//checking the sizes of the textures (tehy should perfectly match)
-			int lastTextureWithoutAlphaIndex = 0;
-			int width = sources.get(0).getImage().getWidth();
-			int height = sources.get(0).getImage().getHeight();
-			int depth = sources.get(0).getImage().getDepth();
-			
-			for(Texture source : sources) {
-				if(source.getImage().getWidth() != width) {
-					throw new IllegalArgumentException("The texture " + source.getName() + " has invalid width! It should be: " + width + '!');
-				}
-				if(source.getImage().getHeight() != height) {
-					throw new IllegalArgumentException("The texture " + source.getName() + " has invalid height! It should be: " + height + '!');
-				}
-				if(source.getImage().getDepth() != depth) {
-					throw new IllegalArgumentException("The texture " + source.getName() + " has invalid depth! It should be: " + depth + '!');
-				}
-				//support for more formats is not necessary at the moment
-				if(source.getImage().getFormat()!=Format.RGB8 && source.getImage().getFormat()!=Format.BGR8) {
-					++lastTextureWithoutAlphaIndex;
-				}
-			}
-			if(depth==0) {
-				depth = 1;
-			}
-			
-			//remove textures before the one without alpha (they will be covered anyway)
-			if(lastTextureWithoutAlphaIndex > 0 && lastTextureWithoutAlphaIndex<sources.size()-1) {
-				sources = sources.subList(lastTextureWithoutAlphaIndex, sources.size()-1);
-			}
-			int pixelsAmount = width * height * depth;
-			
-			ByteBuffer data = BufferUtils.createByteBuffer(pixelsAmount * 3);
-			TexturePixel resultPixel = new TexturePixel();
-			TexturePixel sourcePixel = new TexturePixel();
-			ColorRGBA diffuseColor = materialContext.getDiffuseColor();
-			for (int i = 0; i < pixelsAmount; ++i) {
-				for (int j = 0; j < sources.size(); ++j) {
-					Image image = sources.get(j).getImage();
-					ByteBuffer sourceData = image.getData(0);
-					if(j==0) {
-						resultPixel.fromColor(diffuseColor);
-						sourcePixel.fromImage(image.getFormat(), sourceData, i);
-						resultPixel.merge(sourcePixel);
-					} else {
-						sourcePixel.fromImage(image.getFormat(), sourceData, i);
-						resultPixel.merge(sourcePixel);
-					}
-				}
-				data.put((byte)(255 * resultPixel.red));
-				data.put((byte)(255 * resultPixel.green));
-				data.put((byte)(255 * resultPixel.blue));
-				resultPixel.clear();
-			}
-			
-			if(depth==1) {
-				result = new Texture2D(new Image(Format.RGB8, width, height, data));
-			} else {
-				ArrayList<ByteBuffer> arrayData = new ArrayList<ByteBuffer>(1);
-				arrayData.add(data);
-				result = new Texture3D(new Image(Format.RGB8, width, height, depth, arrayData));
-			}
-		}
-		return result;
-	}
-	
-	/**
-	 * This method alters the material color in a way dependent on the type of the image.
-	 * For example the color remains untouched if the texture is of Luminance type.
-	 * The luminance defines the interaction between the material color and color defined
-	 * for texture blending.
-	 * If the type has 3 or more color channels then the material color is replaces with the texture's
-	 * color and later blended with the defined blend color.
-	 * All alpha values (if present) are ignored and not used during blending.
-	 * @param data
-	 *        the image data
-	 * @param imageFormat
-	 *        the format of the image
-	 * @param neg
-	 *        defines it the result color should be nagated
-	 * @param materialColor
-	 *        the material's color (value may be changed)
-	 * @return texture intensity for the current pixel
-	 */
-	protected float setupMaterialColor(ByteBuffer data, Format imageFormat, boolean neg, float[] materialColor) {
-		float tin = 0.0f;
-		byte pixelValue = data.get();// at least one byte is always taken :)
-		float firstPixelValue = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-		switch (imageFormat) {
-		case Luminance8:
-			tin = neg ? 1.0f - firstPixelValue : firstPixelValue;
-			materialColor[3] = tin;
-			neg = false;//do not negate the materialColor, it must be unchanged
-			break;
-		case RGBA8:
-			materialColor[0] = firstPixelValue;
-			pixelValue = data.get();
-			materialColor[1] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[2] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[3] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			break;
-		case ABGR8:
-			materialColor[3] = firstPixelValue;
-			pixelValue = data.get();
-			materialColor[2] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[1] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[0] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			break;
-		case BGR8:
-			materialColor[2] = firstPixelValue;
-			pixelValue = data.get();
-			materialColor[1] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[0] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			materialColor[3] = 1.0f;
-			break;
-		case RGB8:
-			materialColor[0] = firstPixelValue;
-			pixelValue = data.get();
-			materialColor[1] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			pixelValue = data.get();
-			materialColor[2] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			materialColor[3] = 1.0f;
-			break;
-		case Luminance8Alpha8:
-			tin = neg ? 1.0f - firstPixelValue : firstPixelValue;
-			neg = false;//do not negate the materialColor, it must be unchanged
-			pixelValue = data.get(); // ignore alpha
-			materialColor[3] = pixelValue >= 0 ? pixelValue / 255.0f : 1.0f - (~pixelValue) / 255.0f;
-			break;
-		case Luminance16:
-		case Luminance16Alpha16:
-		case Alpha16:
-		case Alpha8:
-		case ARGB4444:
-		case Depth:
-		case Depth16:
-		case Depth24:
-		case Depth32:
-		case Depth32F:
-		case DXT1:
-		case DXT1A:
-		case DXT3:
-		case DXT5:
-		case Intensity16:
-		case Intensity8:
-		case LATC:
-		case LTC:
-		case Luminance16F:
-		case Luminance16FAlpha16F:
-		case Luminance32F:
-		case RGB10:
-		case RGB111110F:
-		case RGB16:
-		case RGB16F:
-		case RGB16F_to_RGB111110F:
-		case RGB16F_to_RGB9E5:
-		case RGB32F:
-		case RGB565:
-		case RGB5A1:
-		case RGB9E5:
-		case RGBA16:
-		case RGBA16F:
-		case RGBA32F:
-			LOGGER.log(Level.WARNING, "Image type not yet supported for blending: {0}", imageFormat);
-			break;
-		default:
-			throw new IllegalStateException("Unknown image format type: " + imageFormat);
-		}
-		if (neg) {
-			materialColor[0] = 1.0f - materialColor[0];
-			materialColor[1] = 1.0f - materialColor[1];
-			materialColor[2] = 1.0f - materialColor[2];
-		}
-		return tin;
-	}
-
-	/**
-	 * This method blends the texture with an appropriate color.
-	 * 
-	 * @param result
-	 *        the result color (variable 'in' in blender source code)
-	 * @param materialColor
-	 *        the texture color (variable 'out' in blender source coude)
-	 * @param color
-	 *        the previous color (variable 'tex' in blender source code)
-	 * @param textureIntensity
-	 *        texture intensity (variable 'fact' in blender source code)
-	 * @param textureFactor
-	 *        texture affection factor (variable 'facg' in blender source code)
-	 * @param blendtype
-	 *        the blend type
-	 * @param blenderContext
-	 *        the blender context
-	 */
-	protected void blendPixel(float[] result, float[] materialColor, float[] color, float textureIntensity, float textureFactor, int blendtype, BlenderContext blenderContext) {
-		float oneMinusFactor, col;
-		textureIntensity *= textureFactor;
-		
-		switch (blendtype) {
-			case MTEX_BLEND:
-				oneMinusFactor = 1.0f - textureIntensity;
-				result[0] = textureIntensity * color[0] + oneMinusFactor * materialColor[0];
-				result[1] = textureIntensity * color[1] + oneMinusFactor * materialColor[1];
-				result[2] = textureIntensity * color[2] + oneMinusFactor * materialColor[2];
-				break;
-			case MTEX_MUL:
-				oneMinusFactor = 1.0f - textureFactor;
-				result[0] = (oneMinusFactor + textureIntensity * materialColor[0]) * color[0];
-				result[1] = (oneMinusFactor + textureIntensity * materialColor[1]) * color[1];
-				result[2] = (oneMinusFactor + textureIntensity * materialColor[2]) * color[2];
-				break;
-			case MTEX_DIV:
-				oneMinusFactor = 1.0f - textureIntensity;
-				if (color[0] != 0.0) {
-					result[0] = (oneMinusFactor * materialColor[0] + textureIntensity * materialColor[0] / color[0]) * 0.5f;
-				}
-				if (color[1] != 0.0) {
-					result[1] = (oneMinusFactor * materialColor[1] + textureIntensity * materialColor[1] / color[1]) * 0.5f;
-				}
-				if (color[2] != 0.0) {
-					result[2] = (oneMinusFactor * materialColor[2] + textureIntensity * materialColor[2] / color[2]) * 0.5f;
-				}
-				break;
-			case MTEX_SCREEN:
-				oneMinusFactor = 1.0f - textureFactor;
-				result[0] = 1.0f - (oneMinusFactor + textureIntensity * (1.0f - materialColor[0])) * (1.0f - color[0]);
-				result[1] = 1.0f - (oneMinusFactor + textureIntensity * (1.0f - materialColor[1])) * (1.0f - color[1]);
-				result[2] = 1.0f - (oneMinusFactor + textureIntensity * (1.0f - materialColor[2])) * (1.0f - color[2]);
-				break;
-			case MTEX_OVERLAY:
-				oneMinusFactor = 1.0f - textureFactor;
-				if (materialColor[0] < 0.5f) {
-					result[0] = color[0] * (oneMinusFactor + 2.0f * textureIntensity * materialColor[0]);
-				} else {
-					result[0] = 1.0f - (oneMinusFactor + 2.0f * textureIntensity * (1.0f - materialColor[0])) * (1.0f - color[0]);
-				}
-				if (materialColor[1] < 0.5f) {
-					result[1] = color[1] * (oneMinusFactor + 2.0f * textureIntensity * materialColor[1]);
-				} else {
-					result[1] = 1.0f - (oneMinusFactor + 2.0f * textureIntensity * (1.0f - materialColor[1])) * (1.0f - color[1]);
-				}
-				if (materialColor[2] < 0.5f) {
-					result[2] = color[2] * (oneMinusFactor + 2.0f * textureIntensity * materialColor[2]);
-				} else {
-					result[2] = 1.0f - (oneMinusFactor + 2.0f * textureIntensity * (1.0f - materialColor[2])) * (1.0f - color[2]);
-				}
-				break;
-			case MTEX_SUB:
-				result[0] = materialColor[0] - textureIntensity * color[0];
-				result[1] = materialColor[1] - textureIntensity * color[1];
-				result[2] = materialColor[2] - textureIntensity * color[2];
-				result[0] = FastMath.clamp(result[0], 0.0f, 1.0f);
-				result[1] = FastMath.clamp(result[1], 0.0f, 1.0f);
-				result[2] = FastMath.clamp(result[2], 0.0f, 1.0f);
-				break;
-			case MTEX_ADD:
-				result[0] = (textureIntensity * color[0] + materialColor[0]) * 0.5f;
-				result[1] = (textureIntensity * color[1] + materialColor[1]) * 0.5f;
-				result[2] = (textureIntensity * color[2] + materialColor[2]) * 0.5f;
-				break;
-			case MTEX_DIFF:
-				oneMinusFactor = 1.0f - textureIntensity;
-				result[0] = oneMinusFactor * materialColor[0] + textureIntensity * Math.abs(materialColor[0] - color[0]);
-				result[1] = oneMinusFactor * materialColor[1] + textureIntensity * Math.abs(materialColor[1] - color[1]);
-				result[2] = oneMinusFactor * materialColor[2] + textureIntensity * Math.abs(materialColor[2] - color[2]);
-				break;
-			case MTEX_DARK:
-				col = textureIntensity * color[0];
-				result[0] = col < materialColor[0] ? col : materialColor[0];
-				col = textureIntensity * color[1];
-				result[1] = col < materialColor[1] ? col : materialColor[1];
-				col = textureIntensity * color[2];
-				result[2] = col < materialColor[2] ? col : materialColor[2];
-				break;
-			case MTEX_LIGHT:
-				col = textureIntensity * color[0];
-				result[0] = col > materialColor[0] ? col : materialColor[0];
-				col = textureIntensity * color[1];
-				result[1] = col > materialColor[1] ? col : materialColor[1];
-				col = textureIntensity * color[2];
-				result[2] = col > materialColor[2] ? col : materialColor[2];
-				break;
-			case MTEX_BLEND_HUE:
-			case MTEX_BLEND_SAT:
-			case MTEX_BLEND_VAL:
-			case MTEX_BLEND_COLOR:
-				System.arraycopy(materialColor, 0, result, 0, 3);
-				this.rampBlend(blendtype, result, textureIntensity, color, blenderContext);
-				break;
-			default:
-				throw new IllegalStateException("Unknown blend type: " + blendtype);
-		}
-	}
-
-	/**
-	 * The method that performs the ramp blending.
-	 * 
-	 * @param type
-	 *        the blend type
-	 * @param rgb
-	 *        the rgb value where the result is stored
-	 * @param fac
-	 *        color affection factor
-	 * @param col
-	 *        the texture color
-	 * @param blenderContext
-	 *        the blender context
-	 */
-	protected void rampBlend(int type, float[] rgb, float fac, float[] col, BlenderContext blenderContext) {
-		float oneMinusFactor = 1.0f - fac;
-		MaterialHelper materialHelper = blenderContext.getHelper(MaterialHelper.class);
-
-		if (rgb.length >= 3) {
-			switch (type) {
-				case MTEX_BLEND_HUE: {
-					float[] colorTransformResult = new float[3];
-					materialHelper.rgbToHsv(col[0], col[1], col[2], colorTransformResult);
-					if (colorTransformResult[1] != 0.0f) {
-						float colH = colorTransformResult[0];
-						materialHelper.rgbToHsv(rgb[0], rgb[1], rgb[2], colorTransformResult);
-						materialHelper.hsvToRgb(colH, colorTransformResult[1], colorTransformResult[2], colorTransformResult);
-						rgb[0] = oneMinusFactor * rgb[0] + fac * colorTransformResult[0];
-						rgb[1] = oneMinusFactor * rgb[1] + fac * colorTransformResult[1];
-						rgb[2] = oneMinusFactor * rgb[2] + fac * colorTransformResult[2];
-					}
-					break;
-				}
-				case MTEX_BLEND_SAT: {
-					float[] colorTransformResult = new float[3];
-					materialHelper.rgbToHsv(rgb[0], rgb[1], rgb[2], colorTransformResult);
-					float h = colorTransformResult[0];
-					float s = colorTransformResult[1];
-					float v = colorTransformResult[2];
-					if (s != 0.0f) {
-						materialHelper.rgbToHsv(col[0], col[1], col[2], colorTransformResult);
-						materialHelper.hsvToRgb(h, (oneMinusFactor * s + fac * colorTransformResult[1]), v, rgb);
-					}
-					break;
-				}
-				case MTEX_BLEND_VAL: {
-					float[] rgbToHsv = new float[3];
-					float[] colToHsv = new float[3];
-					materialHelper.rgbToHsv(rgb[0], rgb[1], rgb[2], rgbToHsv);
-					materialHelper.rgbToHsv(col[0], col[1], col[2], colToHsv);
-					materialHelper.hsvToRgb(rgbToHsv[0], rgbToHsv[1], (oneMinusFactor * rgbToHsv[2] + fac * colToHsv[2]), rgb);
-					break;
-				}
-				case MTEX_BLEND_COLOR: {
-					float[] rgbToHsv = new float[3];
-					float[] colToHsv = new float[3];
-					materialHelper.rgbToHsv(col[0], col[1], col[2], colToHsv);
-					if (colToHsv[2] != 0) {
-						materialHelper.rgbToHsv(rgb[0], rgb[1], rgb[2], rgbToHsv);
-						materialHelper.hsvToRgb(colToHsv[0], colToHsv[1], rgbToHsv[2], rgbToHsv);
-						rgb[0] = oneMinusFactor * rgb[0] + fac * rgbToHsv[0];
-						rgb[1] = oneMinusFactor * rgb[1] + fac * rgbToHsv[1];
-						rgb[2] = oneMinusFactor * rgb[2] + fac * rgbToHsv[2];
-					}
-					break;
-				}
-				default:
-					throw new IllegalStateException("Unknown ramp type: " + type);
-			}
-		}
-	}
-
-	/**
 	 * This method converts the given texture into normal-map texture.
+	 * 
 	 * @param source
-	 *        the source texture
+	 *            the source texture
 	 * @param strengthFactor
-	 *        the normal strength factor
+	 *            the normal strength factor
 	 * @return normal-map texture
 	 */
 	public Texture convertToNormalMapTexture(Texture source, float strengthFactor) {
@@ -702,14 +228,178 @@ public class TextureHelper extends AbstractBlenderHelper {
 	}
 
 	/**
-	 * This method returns the height represented by the specified pixel in the given texture.
-	 * The given texture should be a height-map.
+	 * This method decompresses the given image. If the given image is already
+	 * decompressed nothing happens and it is simply returned.
+	 * 
 	 * @param image
-	 *        the height-map texture
+	 *            the image to decompress
+	 * @return the decompressed image
+	 */
+	public Image decompress(Image image) {
+		Format format = image.getFormat();
+		int depth = image.getDepth();
+		if(depth == 0) {
+			depth = 1;
+		}
+		ArrayList<ByteBuffer> dataArray = new ArrayList<ByteBuffer>(depth);
+		TexturePixel[] colors = new TexturePixel[] { new TexturePixel(), new TexturePixel(), new TexturePixel(), new TexturePixel() };
+		
+		for (int dataLayerIndex = 0; dataLayerIndex < depth; ++dataLayerIndex) {
+			ByteBuffer data = image.getData(dataLayerIndex);
+			data.rewind();
+			
+			byte[] bytes = new byte[image.getWidth() * image.getHeight() << 2];
+			DDSTexelData texelData = new DDSTexelData(data.remaining() * 8/format.getBitsPerPixel()/16/*data.remaining() / (format.getBitsPerPixel() << 1)*/, 
+					image.getWidth(), image.getHeight(), format != Format.DXT1);
+			switch (format) {
+				case DXT1:// BC1
+				case DXT1A:
+					while (data.hasRemaining()) {
+						short c0 = data.getShort();
+						short c1 = data.getShort();
+						int col0 = RGB565.RGB565_to_ARGB8(c0);
+						int col1 = RGB565.RGB565_to_ARGB8(c1);
+						colors[0].fromARGB8(col0);
+						colors[1].fromARGB8(col1);
+
+						if (col0 > col1) {
+							// creating color2 = 2/3color0 + 1/3color1
+							colors[2].fromPixel(colors[0]);
+							colors[2].mult(2);
+							colors[2].add(colors[1]);
+							colors[2].divide(3);
+
+							// creating color3 = 1/3color0 + 2/3color1;
+							colors[3].fromPixel(colors[1]);
+							colors[3].mult(2);
+							colors[3].add(colors[0]);
+							colors[3].divide(3);
+						} else {
+							// creating color2 = 1/2color0 + 1/2color1
+							colors[2].fromPixel(colors[0]);
+							colors[2].add(colors[1]);
+							colors[2].mult(0.5f);
+
+							colors[3].fromARGB8(0);
+						}
+						int indexes = data.getInt();// 4-byte table with color indexes in decompressed table
+						texelData.add(colors, indexes);
+					}
+					break;
+				case DXT3:// BC2
+					while (data.hasRemaining()) {
+						long alpha = data.getLong();
+						float[] alphas = new float[16];
+						long alphasIndex = 0;
+						for (int i = 0; i < 16; ++i) {
+							alphasIndex |= i << i * 4;
+							byte a = (byte) ((alpha >> i * 4 & 0x0F) << 4);
+							alphas[i] = a >= 0 ? a / 255.0f : 1.0f - ~a / 255.0f;
+						}
+
+						short c0 = data.getShort();
+						short c1 = data.getShort();
+						int col0 = RGB565.RGB565_to_ARGB8(c0);
+						int col1 = RGB565.RGB565_to_ARGB8(c1);
+						colors[0].fromARGB8(col0);
+						colors[1].fromARGB8(col1);
+
+						// creating color2 = 2/3color0 + 1/3color1
+						colors[2].fromPixel(colors[0]);
+						colors[2].mult(2);
+						colors[2].add(colors[1]);
+						colors[2].divide(3);
+
+						// creating color3 = 1/3color0 + 2/3color1;
+						colors[3].fromPixel(colors[1]);
+						colors[3].mult(2);
+						colors[3].add(colors[0]);
+						colors[3].divide(3);
+
+						int indexes = data.getInt();// 4-byte table with color indexes in decompressed table
+						texelData.add(colors, indexes, alphas, alphasIndex);
+					}
+					break;
+				case DXT5:// BC3
+					float[] alphas = new float[8];
+					while (data.hasRemaining()) {
+						alphas[0] = data.get() * 255.0f;
+						alphas[1] = data.get() * 255.0f;
+						long alphaIndices = data.get() | data.get() << 8 | data.get() << 16 | data.get() << 24 | data.get() << 32 | data.get() << 40;
+						if (alphas[0] > alphas[1]) {// 6 interpolated alpha values.
+							alphas[2] = (6 * alphas[0] + alphas[1]) / 7;
+							alphas[3] = (5 * alphas[0] + 2 * alphas[1]) / 7;
+							alphas[4] = (4 * alphas[0] + 3 * alphas[1]) / 7;
+							alphas[5] = (3 * alphas[0] + 4 * alphas[1]) / 7;
+							alphas[6] = (2 * alphas[0] + 5 * alphas[1]) / 7;
+							alphas[7] = (alphas[0] + 6 * alphas[1]) / 7;
+						} else {
+							alphas[2] = (4 * alphas[0] + alphas[1]) * 0.2f;
+							alphas[3] = (3 * alphas[0] + 2 * alphas[1]) * 0.2f;
+							alphas[4] = (2 * alphas[0] + 3 * alphas[1]) * 0.2f;
+							alphas[5] = (alphas[0] + 4 * alphas[1]) * 0.2f;
+							alphas[6] = 0;
+							alphas[7] = 1;
+						}
+
+						short c0 = data.getShort();
+						short c1 = data.getShort();
+						int col0 = RGB565.RGB565_to_ARGB8(c0);
+						int col1 = RGB565.RGB565_to_ARGB8(c1);
+						colors[0].fromARGB8(col0);
+						colors[1].fromARGB8(col1);
+
+						// creating color2 = 2/3color0 + 1/3color1
+						colors[2].fromPixel(colors[0]);
+						colors[2].mult(2);
+						colors[2].add(colors[1]);
+						colors[2].divide(3);
+
+						// creating color3 = 1/3color0 + 2/3color1;
+						colors[3].fromPixel(colors[1]);
+						colors[3].mult(2);
+						colors[3].add(colors[0]);
+						colors[3].divide(3);
+
+						int indexes = data.getInt();// 4-byte table with color indexes in decompressed table
+						texelData.add(colors, indexes, alphas, alphaIndices);
+					}
+					break;
+				default:
+					throw new IllegalStateException("Unknown compressed format: " + format);
+			}
+
+			byte[] pixelBytes = new byte[4];
+			for (int i = 0; i < image.getWidth(); ++i) {
+				for (int j = 0; j < image.getHeight(); ++j) {
+					texelData.getRGBA8(i, j, pixelBytes);
+					bytes[(j * image.getWidth() + i) * 4] = pixelBytes[0];
+					bytes[(j * image.getWidth() + i) * 4 + 1] = pixelBytes[1];
+					bytes[(j * image.getWidth() + i) * 4 + 2] = pixelBytes[2];
+					bytes[(j * image.getWidth() + i) * 4 + 3] = pixelBytes[3];
+				}
+			}
+			dataArray.add(BufferUtils.createByteBuffer(bytes));
+		}
+		
+		Image result = depth > 1 ? new Image(Format.RGBA8, image.getWidth(), image.getHeight(), depth, dataArray) : 
+								   new Image(Format.RGBA8, image.getWidth(), image.getHeight(), dataArray.get(0));
+		if(image.getMipMapSizes() != null) {
+			result.setMipMapSizes(image.getMipMapSizes().clone());
+		}
+		return result;
+	}
+
+	/**
+	 * This method returns the height represented by the specified pixel in the
+	 * given texture. The given texture should be a height-map.
+	 * 
+	 * @param image
+	 *            the height-map texture
 	 * @param x
-	 *        pixel's X coordinate
+	 *            pixel's X coordinate
 	 * @param y
-	 *        pixel's Y coordinate
+	 *            pixel's Y coordinate
 	 * @return height reprezented by the given texture in the specified location
 	 */
 	protected int getHeight(BufferedImage image, int x, int y) {
@@ -727,10 +417,15 @@ public class TextureHelper extends AbstractBlenderHelper {
 	}
 
 	/**
-	 * This method transforms given vector's coordinates into ARGB color (A is always = 255).
-	 * @param x X factor of the vector
-	 * @param y Y factor of the vector
-	 * @param z Z factor of the vector
+	 * This method transforms given vector's coordinates into ARGB color (A is
+	 * always = 255).
+	 * 
+	 * @param x
+	 *            X factor of the vector
+	 * @param y
+	 *            Y factor of the vector
+	 * @param z
+	 *            Z factor of the vector
 	 * @return color representation of the given vector
 	 */
 	protected int vectorToColor(float x, float y, float z) {
@@ -741,15 +436,17 @@ public class TextureHelper extends AbstractBlenderHelper {
 	}
 
 	/**
-	 * This class returns a texture read from the file or from packed blender data.
+	 * This class returns a texture read from the file or from packed blender
+	 * data.
 	 * 
 	 * @param image
-	 *        image structure filled with data
+	 *            image structure filled with data
 	 * @param blenderContext
-	 *        the blender context
+	 *            the blender context
 	 * @return the texture that can be used by JME engine
 	 * @throws BlenderFileException
-	 *         this exception is thrown when the blend file structure is somehow invalid or corrupted
+	 *             this exception is thrown when the blend file structure is
+	 *             somehow invalid or corrupted
 	 */
 	public Texture getTextureFromImage(Structure image, BlenderContext blenderContext) throws BlenderFileException {
 		LOGGER.log(Level.FINE, "Fetching texture with OMA = {0}", image.getOldMemoryAddress());
@@ -777,8 +474,8 @@ public class TextureHelper extends AbstractBlenderHelper {
 			if (result != null) {
 				result.setName(texturePath);
 				result.setWrap(Texture.WrapMode.Repeat);
-				if(LOGGER.isLoggable(Level.FINE)) {
-					LOGGER.log(Level.FINE, "Adding texture {0} to the loaded features with OMA = {1}", new Object[] {texturePath, image.getOldMemoryAddress()});
+				if (LOGGER.isLoggable(Level.FINE)) {
+					LOGGER.log(Level.FINE, "Adding texture {0} to the loaded features with OMA = {1}", new Object[] { texturePath, image.getOldMemoryAddress() });
 				}
 				blenderContext.addLoadedFeatures(image.getOldMemoryAddress(), image.getName(), image, result);
 			}
@@ -787,19 +484,70 @@ public class TextureHelper extends AbstractBlenderHelper {
 	}
 
 	/**
+	 * This method applies the colorband and color factors to image type
+	 * textures. If there is no colorband defined for the texture or the color
+	 * factors are all equal to 1.0f then no changes are made.
+	 * 
+	 * @param tex
+	 *            the texture structure
+	 * @param image
+	 *            the image that will be altered if necessary
+	 * @param blenderContext
+	 *            the blender context
+	 */
+	private void applyColorbandAndColorFactors(Structure tex, Image image, BlenderContext blenderContext) {
+		float rfac = ((Number) tex.getFieldValue("rfac")).floatValue();
+		float gfac = ((Number) tex.getFieldValue("gfac")).floatValue();
+		float bfac = ((Number) tex.getFieldValue("bfac")).floatValue();
+		float[][] colorBand = new ColorBand(tex, blenderContext).computeValues();
+
+		if (colorBand != null) {
+			TexturePixel pixel = new TexturePixel();
+			PixelInputOutput imageIO = PixelIOFactory.getPixelIO(image.getFormat());
+			for (int x = 0; x < image.getWidth(); ++x) {
+				for (int y = 0; y < image.getHeight(); ++y) {
+					imageIO.read(image, pixel, x, y);
+
+					int colorbandIndex = (int) (pixel.alpha * 1000.0f);
+					pixel.red = colorBand[colorbandIndex][0] * rfac;
+					pixel.green = colorBand[colorbandIndex][1] * gfac;
+					pixel.blue = colorBand[colorbandIndex][2] * bfac;
+					pixel.alpha = colorBand[colorbandIndex][3];
+
+					imageIO.write(image, pixel, x, y);
+				}
+			}
+		} else if (rfac != 1.0f || gfac != 1.0f || bfac != 1.0f) {
+			TexturePixel pixel = new TexturePixel();
+			PixelInputOutput imageIO = PixelIOFactory.getPixelIO(image.getFormat());
+			for (int x = 0; x < image.getWidth(); ++x) {
+				for (int y = 0; y < image.getHeight(); ++y) {
+					imageIO.read(image, pixel, x, y);
+
+					pixel.red *= rfac;
+					pixel.green *= gfac;
+					pixel.blue *= bfac;
+
+					imageIO.write(image, pixel, x, y);
+				}
+			}
+		}
+	}
+
+	/**
 	 * This method loads the textre from outside the blend file.
 	 * 
 	 * @param name
-	 *        the path to the image
+	 *            the path to the image
 	 * @param blenderContext
-	 *        the blender context
+	 *            the blender context
 	 * @return the loaded image or null if the image cannot be found
 	 */
 	protected Texture loadTextureFromFile(String name, BlenderContext blenderContext) {
-                if (!name.contains(".")){
-                    return null; // no extension means not a valid image
-                }
-                
+		if (!name.contains(".")) {
+			return null; // no extension means not a valid image
+		}
+
 		AssetManager assetManager = blenderContext.getAssetManager();
 		name = name.replaceAll("\\\\", "\\/");
 		Texture result = null;
@@ -807,32 +555,34 @@ public class TextureHelper extends AbstractBlenderHelper {
 		List<String> assetNames = new ArrayList<String>();
 		if (name.startsWith("//")) {
 			String relativePath = name.substring(2);
-			//augument the path with blender key path
+			// augument the path with blender key path
 			BlenderKey blenderKey = blenderContext.getBlenderKey();
-            int idx = blenderKey.getName().lastIndexOf('/');
+			int idx = blenderKey.getName().lastIndexOf('/');
 			String blenderAssetFolder = blenderKey.getName().substring(0, idx != -1 ? idx : 0);
-			assetNames.add(blenderAssetFolder+'/'+relativePath);
-		} else {//use every path from the asset name to the root (absolute path)
+			assetNames.add(blenderAssetFolder + '/' + relativePath);
+		} else {// use every path from the asset name to the root (absolute
+				// path)
 			String[] paths = name.split("\\/");
-			StringBuilder sb = new StringBuilder(paths[paths.length-1]);//the asset name
-			assetNames.add(paths[paths.length-1]);
+			StringBuilder sb = new StringBuilder(paths[paths.length - 1]);// the asset name
+			assetNames.add(paths[paths.length - 1]);
 
-			for(int i=paths.length-2;i>=0;--i) {
+			for (int i = paths.length - 2; i >= 0; --i) {
 				sb.insert(0, '/');
 				sb.insert(0, paths[i]);
 				assetNames.add(0, sb.toString());
 			}
 		}
 
-		//now try to locate the asset
-		for(String assetName : assetNames) {
+		// now try to locate the asset
+		for (String assetName : assetNames) {
 			try {
-                TextureKey key = new TextureKey(assetName);
-                key.setGenerateMips(true);
-                key.setAsCube(false);
+				TextureKey key = new TextureKey(assetName);
+				key.setGenerateMips(true);
+				key.setAsCube(false);
 				result = assetManager.loadTexture(key);
-				break;//if no exception is thrown then accept the located asset and break the loop
-			} catch(AssetNotFoundException e) {
+				break;// if no exception is thrown then accept the located asset
+						// and break the loop
+			} catch (AssetNotFoundException e) {
 				LOGGER.fine(e.getLocalizedMessage());
 			}
 		}

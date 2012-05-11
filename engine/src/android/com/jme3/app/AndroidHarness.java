@@ -4,31 +4,43 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.pm.ActivityInfo;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.NinePatchDrawable;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
-import android.view.Display;
-import android.view.Window;
-import android.view.WindowManager;
+import android.view.ViewGroup.LayoutParams;
+import android.view.*;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
+import com.jme3.audio.AudioRenderer;
+import com.jme3.audio.android.AndroidAudioRenderer;
+import com.jme3.input.TouchInput;
 import com.jme3.input.android.AndroidInput;
 import com.jme3.input.controls.TouchListener;
+import com.jme3.input.controls.TouchTrigger;
 import com.jme3.input.event.TouchEvent;
 import com.jme3.system.AppSettings;
 import com.jme3.system.JmeSystem;
+import com.jme3.system.SystemListener;
 import com.jme3.system.android.AndroidConfigChooser.ConfigType;
 import com.jme3.system.android.JmeAndroidSystem;
 import com.jme3.system.android.OGLESContext;
 import com.jme3.util.JmeFormatter;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * <code>AndroidHarness</code> wraps a jme application object and runs it on Android
+ * <code>AndroidHarness</code> wraps a jme application object and runs it on
+ * Android
+ *
  * @author Kirill
  * @author larynx
  */
-public class AndroidHarness extends Activity implements TouchListener, DialogInterface.OnClickListener {
+public class AndroidHarness extends Activity implements TouchListener, DialogInterface.OnClickListener, SystemListener {
 
     protected final static Logger logger = Logger.getLogger(AndroidHarness.class.getName());
     /**
@@ -40,8 +52,8 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
      */
     protected Application app = null;
     /**
-     * ConfigType.FASTEST is RGB565, GLSurfaceView default
-     * ConfigType.BEST is RGBA8888 or better if supported by the hardware
+     * ConfigType.FASTEST is RGB565, GLSurfaceView default ConfigType.BEST is
+     * RGBA8888 or better if supported by the hardware
      */
     protected ConfigType eglConfigType = ConfigType.FASTEST;
     /**
@@ -61,48 +73,59 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
      */
     protected boolean mouseEventsInvertY = true;
     /**
+     * if true finish this activity when the jme app is stopped
+     */
+    protected boolean finishOnAppStop = true;
+    /**
+     * set to false if you don't want the harness to handle the exit hook
+     */
+    protected boolean handleExitHook = true;
+    /**
      * Title of the exit dialog, default is "Do you want to exit?"
      */
     protected String exitDialogTitle = "Do you want to exit?";
     /**
-     * Message of the exit dialog, default is "Use your home key to bring this app into the background or exit to terminate it."
+     * Message of the exit dialog, default is "Use your home key to bring this
+     * app into the background or exit to terminate it."
      */
     protected String exitDialogMessage = "Use your home key to bring this app into the background or exit to terminate it.";
-    
     /**
-     * Set the screen window size
-     * if screenFullSize is true, then the notification bar and title bar are
-     *   removed and the screen covers the entire display
-     * if screenFullSize is false, then the notification bar remains visible
-     *   if screenShowTitle is true while screenFullScreen is false, then the
-     *     title bar is also displayed under the notification bar
-     */
+     * Set the screen window mode. If screenFullSize is true, then the
+     * notification bar and title bar are removed and the screen covers the
+     * entire display.   If screenFullSize is false, then the notification bar
+     * remains visible if screenShowTitle is true while screenFullScreen is
+     * false, then the title bar is also displayed under the notification bar.
+     */
     protected boolean screenFullScreen = true;
-    
     /**
      * if screenShowTitle is true while screenFullScreen is false, then the
-     *     title bar is also displayed under the notification bar
+     * title bar is also displayed under the notification bar
      */
     protected boolean screenShowTitle = true;
-    
+    /**
+     * Splash Screen picture Resource ID. If a Splash Screen is desired, set
+     * splashPicID to the value of the Resource ID (i.e. R.drawable.picname). If
+     * splashPicID = 0, then no splash screen will be displayed.
+     */
+    protected int splashPicID = 0;
     /**
      * Set the screen orientation, default is SENSOR
-     * ActivityInfo.SCREEN_ORIENTATION_* constants
-     * package android.content.pm.ActivityInfo
-     *  
-     *   SCREEN_ORIENTATION_UNSPECIFIED
-     *   SCREEN_ORIENTATION_LANDSCAPE
-     *   SCREEN_ORIENTATION_PORTRAIT
-     *   SCREEN_ORIENTATION_USER
-     *   SCREEN_ORIENTATION_BEHIND
-     *   SCREEN_ORIENTATION_SENSOR (default)
-     *   SCREEN_ORIENTATION_NOSENSOR
+     * ActivityInfo.SCREEN_ORIENTATION_* constants package
+     * android.content.pm.ActivityInfo
+     *
+     * SCREEN_ORIENTATION_UNSPECIFIED SCREEN_ORIENTATION_LANDSCAPE
+     * SCREEN_ORIENTATION_PORTRAIT SCREEN_ORIENTATION_USER
+     * SCREEN_ORIENTATION_BEHIND SCREEN_ORIENTATION_SENSOR (default)
+     * SCREEN_ORIENTATION_NOSENSOR
      */
     protected int screenOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR;
     protected OGLESContext ctx;
     protected GLSurfaceView view = null;
     protected boolean isGLThreadPaused = true;
+    private ImageView splashImageView = null;
+    private FrameLayout frameLayout = null;
     final private String ESCAPE_EVENT = "TouchEscape";
+    private boolean firstDrawFrame = true;
 
     static {
         try {
@@ -167,7 +190,6 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
             app.start();
             ctx = (OGLESContext) app.getContext();
             view = ctx.createView(input, eglConfigType, eglConfigVerboseLogging);
-            setContentView(view);
 
             // Set the screen reolution
             WindowManager wind = this.getWindowManager();
@@ -176,6 +198,9 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
 
             AppSettings s = ctx.getSettings();
             logger.log(Level.INFO, "Settings: Width {0} Height {1}", new Object[]{s.getWidth(), s.getHeight()});
+            //setting the Harness as the system listener
+            ctx.setSystemListener(this);
+            layoutDisplay();
         } catch (Exception ex) {
             handleError("Class " + appClass + " init failed", ex);
             setContentView(new TextView(this));
@@ -188,6 +213,7 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
         if (app != null) {
             app.restart();
         }
+
         logger.info("onRestart");
     }
 
@@ -203,6 +229,18 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
         if (view != null) {
             view.onResume();
         }
+
+        if (app != null) {
+            //resume the audio
+            AudioRenderer result = app.getAudioRenderer();
+            if (result != null) {
+                if (result instanceof AndroidAudioRenderer) {
+                    AndroidAudioRenderer renderer = (AndroidAudioRenderer) result;
+                    renderer.resumeAll();
+                }
+            }
+        }
+
         isGLThreadPaused = false;
         logger.info("onResume");
     }
@@ -213,13 +251,27 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
         if (view != null) {
             view.onPause();
         }
+
+        if (app != null) {
+            //pause the audio
+            AudioRenderer result = app.getAudioRenderer();
+            if (result != null) {
+                logger.log(Level.INFO, "pause: {0}", result.getClass().getSimpleName());
+                if (result instanceof AndroidAudioRenderer) {
+                    AndroidAudioRenderer renderer = (AndroidAudioRenderer) result;
+                    renderer.pauseAll();
+                }
+            }
+        }
         isGLThreadPaused = true;
         logger.info("onPause");
+
     }
 
     @Override
     protected void onStop() {
         super.onStop();
+
         logger.info("onStop");
     }
 
@@ -228,8 +280,9 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
         if (app != null) {
             app.stop(!isGLThreadPaused);
         }
-        super.onDestroy();
+
         logger.info("onDestroy");
+        super.onDestroy();
     }
 
     public Application getJmeApplication() {
@@ -237,43 +290,42 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
     }
 
     /**
-     * Called when an error has occured. This is typically
-     * invoked when an uncaught exception is thrown in the render thread.
-     * @param errorMsg The error message, if any, or null.
-     * @param t Throwable object, or null.
+     * Called when an error has occurred. By default, will show an error message
+     * to the user and print the exception/error to the log.
      */
     public void handleError(final String errorMsg, final Throwable t) {
-        String sTrace = "";
-        if (t != null && t.getStackTrace() != null) {
-            for (StackTraceElement ste : t.getStackTrace()) {
-                sTrace += "\tat " + ste.getClassName() + "." + ste.getMethodName() + "(";
-                if (ste.isNativeMethod()){
-                    sTrace += "Native";
-                }else{
-                    sTrace += ste.getLineNumber();
-                }
-                sTrace +=  ")\n";
-            }
+        String stackTrace = "";
+        String title = "Error";
+
+        if (t != null) {
+            // Convert exception to string
+            StringWriter sw = new StringWriter(100);
+            t.printStackTrace(new PrintWriter(sw));
+            stackTrace = sw.toString();
+            title = t.toString();
         }
 
-        final String stackTrace = sTrace;
+        final String finalTitle = title;
+        final String finalMsg = (errorMsg != null ? errorMsg : "Uncaught Exception")
+                + "\n" + stackTrace;
 
-        logger.log(Level.SEVERE, t != null ? t.toString() : "OpenGL Exception");
-        logger.log(Level.SEVERE, "{0}{1}", new Object[]{errorMsg != null ? errorMsg + ": " : "", stackTrace});
+        logger.log(Level.SEVERE, finalMsg);
 
-        this.runOnUiThread(new Runnable() {
+        runOnUiThread(new Runnable() {
+
             @Override
             public void run() {
                 AlertDialog dialog = new AlertDialog.Builder(AndroidHarness.this) // .setIcon(R.drawable.alert_dialog_icon)
-                        .setTitle(t != null ? (t.getMessage() != null ? (t.getMessage() + ": " + t.getClass().getName()) : t.getClass().getName()) : "OpenGL Exception").setPositiveButton("Kill", AndroidHarness.this).setMessage((errorMsg != null ? errorMsg + ": " : "") + stackTrace).create();
+                        .setTitle(finalTitle).setPositiveButton("Kill", AndroidHarness.this).setMessage(finalMsg).create();
                 dialog.show();
             }
         });
-
     }
 
     /**
-     * Called by the android alert dialog, terminate the activity and OpenGL rendering
+     * Called by the android alert dialog, terminate the activity and OpenGL
+     * rendering
+     *
      * @param dialog
      * @param whichButton
      */
@@ -282,6 +334,7 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
             if (app != null) {
                 app.stop(true);
             }
+            app = null;
             this.finish();
         }
     }
@@ -294,7 +347,8 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
         if (name.equals(ESCAPE_EVENT)) {
             switch (evt.getType()) {
                 case KEY_UP:
-                    this.runOnUiThread(new Runnable() {
+                    runOnUiThread(new Runnable() {
+
                         @Override
                         public void run() {
                             AlertDialog dialog = new AlertDialog.Builder(AndroidHarness.this) // .setIcon(R.drawable.alert_dialog_icon)
@@ -302,12 +356,105 @@ public class AndroidHarness extends Activity implements TouchListener, DialogInt
                             dialog.show();
                         }
                     });
-
                     break;
                 default:
                     break;
             }
         }
+    }
 
+    public void layoutDisplay() {
+        logger.log(Level.INFO, "Splash Screen Picture Resource ID: {0}", splashPicID);
+        if (splashPicID != 0) {
+            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                    LayoutParams.FILL_PARENT,
+                    LayoutParams.FILL_PARENT,
+                    Gravity.CENTER);
+
+            frameLayout = new FrameLayout(this);
+            splashImageView = new ImageView(this);
+
+            Drawable drawable = this.getResources().getDrawable(splashPicID);
+            if (drawable instanceof NinePatchDrawable) {
+                splashImageView.setBackgroundDrawable(drawable);
+            } else {
+                splashImageView.setImageResource(splashPicID);
+            }
+
+            frameLayout.addView(view);
+            frameLayout.addView(splashImageView, lp);
+
+            setContentView(frameLayout);
+            logger.log(Level.INFO, "Splash Screen Created");
+        } else {
+            logger.log(Level.INFO, "Splash Screen Skipped.");
+            setContentView(view);
+        }
+    }
+
+    public void removeSplashScreen() {
+        logger.log(Level.INFO, "Splash Screen Picture Resource ID: {0}", splashPicID);
+        if (splashPicID != 0) {
+            if (frameLayout != null) {
+                if (splashImageView != null) {
+                    this.runOnUiThread(new Runnable() {
+
+                        @Override
+                        public void run() {
+                            splashImageView.setVisibility(View.INVISIBLE);
+                            frameLayout.removeView(splashImageView);
+                        }
+                    });
+                } else {
+                    logger.log(Level.INFO, "splashImageView is null");
+                }
+            } else {
+                logger.log(Level.INFO, "frameLayout is null");
+            }
+        }
+    }
+
+    public void initialize() {
+        app.initialize();
+        if (handleExitHook) {
+            app.getInputManager().addMapping(ESCAPE_EVENT, new TouchTrigger(TouchInput.KEYCODE_BACK));
+            app.getInputManager().addListener(this, new String[]{ESCAPE_EVENT});
+        }
+    }
+
+    public void reshape(int width, int height) {
+        app.reshape(width, height);
+    }
+
+    public void update() {
+        app.update();
+        // call to remove the splash screen, if present.
+        // call after app.update() to make sure no gap between
+        // splash screen going away and app display being shown.
+        if (firstDrawFrame) {
+            removeSplashScreen();
+            firstDrawFrame = false;
+        }
+    }
+
+    public void requestClose(boolean esc) {
+        app.requestClose(esc);
+    }
+
+    public void gainFocus() {
+        app.gainFocus();
+    }
+
+    public void loseFocus() {
+        app.loseFocus();
+    }
+
+    public void destroy() {
+        if (app != null) {
+            app.destroy();
+        }
+        if (finishOnAppStop) {
+            finish();
+        }
     }
 }

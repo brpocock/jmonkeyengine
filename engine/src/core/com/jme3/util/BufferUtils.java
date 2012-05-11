@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2010 jMonkeyEngine
+ * Copyright (c) 2009-2012 jMonkeyEngine
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -432,7 +433,7 @@ public final class BufferUtils {
      * @param index
      *            the position (in terms of vectors, not floats) of the vector
      *            in the buffer to check against
-     * @return
+     * @return true if the data is equivalent, otherwise false.
      */
     public static boolean equals(Vector3f check, FloatBuffer buf, int index) {
         TempVars vars = TempVars.get();
@@ -637,7 +638,7 @@ public final class BufferUtils {
      * @param index
      *            the position (in terms of vectors, not floats) of the vector
      *            in the buffer to check against
-     * @return
+     * @return true if the data is equivalent, otherwise false.
      */
     public static boolean equals(Vector2f check, FloatBuffer buf, int index) {
         TempVars vars = TempVars.get();
@@ -1061,7 +1062,7 @@ public final class BufferUtils {
             int position = (buffer != null ? buffer.position() : 0);
             FloatBuffer newVerts = createFloatBuffer(position + required);
             if (buffer != null) {
-                buffer.rewind();
+                buffer.flip();
                 newVerts.put(buffer);
                 newVerts.position(position);
             }
@@ -1075,7 +1076,7 @@ public final class BufferUtils {
             int position = (buffer != null ? buffer.position() : 0);
             ShortBuffer newVerts = createShortBuffer(position + required);
             if (buffer != null) {
-                buffer.rewind();
+                buffer.flip();
                 newVerts.put(buffer);
                 newVerts.position(position);
             }
@@ -1089,7 +1090,7 @@ public final class BufferUtils {
             int position = (buffer != null ? buffer.position() : 0);
             ByteBuffer newVerts = createByteBuffer(position + required);
             if (buffer != null) {
-                buffer.rewind();
+                buffer.flip();
                 newVerts.put(buffer);
                 newVerts.position(position);
             }
@@ -1144,37 +1145,95 @@ public final class BufferUtils {
         }
     }
     
+    private static final AtomicBoolean loadedMethods = new AtomicBoolean(false);
+    private static Method cleanerMethod = null;
+    private static Method cleanMethod = null;
+    private static Method viewedBufferMethod = null;
+    private static Method freeMethod = null;
+    
+    private static Method loadMethod(String className, String methodName){
+        try {
+            Method method = Class.forName(className).getMethod(methodName);
+            method.setAccessible(true);
+            return method;
+        } catch (NoSuchMethodException ex) {
+            return null; // the method was not found
+        } catch (SecurityException ex) {
+            return null; // setAccessible not allowed by security policy
+        } catch (ClassNotFoundException ex) {
+            return null; // the direct buffer implementation was not found
+        }
+    }
+    
+    private static void loadCleanerMethods() {
+        // If its already true, exit, if not, set it to true.
+        if (loadedMethods.getAndSet(true)) {
+            return;
+        }
+        // This could potentially be called many times if used from multiple
+        // threads
+        synchronized (loadedMethods) {
+            // Oracle JRE / OpenJDK
+            cleanerMethod = loadMethod("sun.nio.ch.DirectBuffer", "cleaner");
+            cleanMethod = loadMethod("sun.misc.Cleaner", "clean");
+            viewedBufferMethod = loadMethod("sun.nio.ch.DirectBuffer", "viewedBuffer");
+            if (viewedBufferMethod == null){
+                // They changed the name in Java 7 (???)
+                viewedBufferMethod = loadMethod("sun.nio.ch.DirectBuffer", "attachment");
+            }
+            
+            // Apache Harmony
+            freeMethod = loadMethod("org.apache.harmony.nio.internal.DirectBuffer", "free");
+            
+            // GUN Classpath (not likely)
+            //finalizeMethod = loadMethod("java.nio.DirectByteBufferImpl", "finalize");
+        }
+    }
+    
     /**
-    * DirectByteBuffers are garbage collected by using a phantom reference and a
+    * Direct buffers are garbage collected by using a phantom reference and a
     * reference queue. Every once a while, the JVM checks the reference queue and
-    * cleans the DirectByteBuffers. However, as this doesn't happen
-    * immediately after discarding all references to a DirectByteBuffer, it's
-    * easy to OutOfMemoryError yourself using DirectByteBuffers. This function
-    * explicitly calls the Cleaner method of a DirectByteBuffer.
+    * cleans the direct buffers. However, as this doesn't happen
+    * immediately after discarding all references to a direct buffer, it's
+    * easy to OutOfMemoryError yourself using direct buffers. This function
+    * explicitly calls the Cleaner method of a direct buffer.
     * 
     * @param toBeDestroyed
-    *          The DirectByteBuffer that will be "cleaned". Utilizes reflection.
+    *          The direct buffer that will be "cleaned". Utilizes reflection.
     *          
     */
-    public static void destroyByteBuffer(ByteBuffer toBeDestroyed) {
+    public static void destroyDirectBuffer(Buffer toBeDestroyed) {
+        if (!toBeDestroyed.isDirect()) {
+            return;
+        }
+        
+        loadCleanerMethods();
+        
         try {
-            Method cleanerMethod = toBeDestroyed.getClass().getMethod("cleaner");
-            cleanerMethod.setAccessible(true);
-            Object cleaner = cleanerMethod.invoke(toBeDestroyed);
-            Method cleanMethod = cleaner.getClass().getMethod("clean");
-            cleanMethod.setAccessible(true);
-            cleanMethod.invoke(cleaner);
+            if (freeMethod != null) {
+                freeMethod.invoke(toBeDestroyed);
+            } else {
+                Object cleaner = cleanerMethod.invoke(toBeDestroyed);
+                if (cleaner != null) {
+                    cleanMethod.invoke(cleaner);
+                } else {
+                    // Try the alternate approach of getting the viewed buffer first
+                    Object viewedBuffer = viewedBufferMethod.invoke(toBeDestroyed);
+                    if (viewedBuffer != null) {
+                        destroyDirectBuffer((Buffer) viewedBuffer);
+                    } else {
+                        Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "Buffer cannot be destroyed: {0}", toBeDestroyed);
+                    }
+                }
+            }
         } catch (IllegalAccessException ex) {
             Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "{0}", ex);
         } catch (IllegalArgumentException ex) {
             Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "{0}", ex);
         } catch (InvocationTargetException ex) {
             Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "{0}", ex);
-        } catch (NoSuchMethodException ex) {
-            Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "{0}", ex);
         } catch (SecurityException ex) {
             Logger.getLogger(BufferUtils.class.getName()).log(Level.SEVERE, "{0}", ex);
         }
     }
-
 }

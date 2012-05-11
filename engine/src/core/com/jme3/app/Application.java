@@ -99,6 +99,7 @@ public class Application implements SystemListener {
      * Create a new instance of <code>Application</code>.
      */
     public Application(){
+        initStateManager();
     }
 
     /**
@@ -206,6 +207,10 @@ public class Application implements SystemListener {
         if (renderManager != null) {
             renderManager.setTimer(timer);
         }
+    }
+    
+    public Timer getTimer(){
+        return timer;
     } 
 
     private void initDisplay(){
@@ -285,6 +290,10 @@ public class Application implements SystemListener {
 
     private void initStateManager(){
         stateManager = new AppStateManager(this);
+        
+        // Always register a ResetStatsState to make sure
+        // that the stats are cleared every frame
+        stateManager.attach(new ResetStatsState());
     }
 
     /**
@@ -497,7 +506,6 @@ public class Application implements SystemListener {
             initInput();
         }
         initAudio();
-        initStateManager();
 
         // update timer so that the next delta is not too large
 //        timer.update();
@@ -560,6 +568,18 @@ public class Application implements SystemListener {
     }
 
     /**
+     * Runs tasks enqueued via {@link #enqueue(Callable)}
+     */
+    protected void runQueuedTasks() {
+	  AppTask<?> task;
+        while( (task = taskQueue.poll()) != null ) {
+            if (!task.isCancelled()) {
+                task.invoke();
+            }
+        }
+    } 
+
+    /**
      * Do not call manually.
      * Callback from ContextListener.
      */
@@ -567,15 +587,7 @@ public class Application implements SystemListener {
         // Make sure the audio renderer is available to callables
         AudioContext.setAudioRenderer(audioRenderer);
         
-        AppTask<?> task = taskQueue.poll();
-        toploop: do {
-            if (task == null) break;
-            while (task.isCancelled()) {
-                task = taskQueue.poll();
-                if (task == null) break toploop;
-            }
-            task.invoke();
-        } while (((task = taskQueue.poll()) != null));
+        runQueuedTasks();
     
         if (speed == 0 || paused)
             return;

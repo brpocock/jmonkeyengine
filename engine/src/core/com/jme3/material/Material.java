@@ -29,7 +29,7 @@
  */
 package com.jme3.material;
 
-import com.jme3.asset.Asset;
+import com.jme3.asset.CloneableSmartAsset;
 import com.jme3.asset.AssetKey;
 import com.jme3.asset.AssetManager;
 import com.jme3.export.*;
@@ -63,13 +63,13 @@ import java.util.logging.Logger;
  * Setting the parameters can modify the behavior of a
  * shader.
  * <p/>
+ * 
  * @author Kirill Vainer
  */
-public class Material implements Asset, Cloneable, Savable, Comparable<Material> {
+public class Material implements CloneableSmartAsset, Cloneable, Savable {
 
     // Version #2: Fixed issue with RenderState.apply*** flags not getting exported
     public static final int SAVABLE_VERSION = 2;
-    
     private static final Logger logger = Logger.getLogger(Material.class.getName());
     private static final RenderState additiveLight = new RenderState();
     private static final RenderState depthOnly = new RenderState();
@@ -105,8 +105,8 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
         this.def = def;
 
         // Load default values from definition (if any)
-        for (MatParam param : def.getMaterialParams()){
-            if (param.getValue() != null){
+        for (MatParam param : def.getMaterialParams()) {
+            if (param.getValue() != null) {
                 setParam(param.getName(), param.getVarType(), param.getValue());
             }
         }
@@ -133,13 +133,13 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
     public String getAssetName() {
         return key != null ? key.getName() : null;
     }
-    
+
     /**
      * @return the name of the material (not the same as the asset name), the returned value can be null
      */
     public String getName() {
-		return name;
-	}
+        return name;
+    }
     
     /**
      * This method sets the name of the material.
@@ -148,8 +148,8 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
      * @param name the name of the material
      */
     public void setName(String name) {
-		this.name = name;
-	}
+        this.name = name;
+    }
 
     public void setKey(AssetKey key) {
         this.key = key;
@@ -190,27 +190,6 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
     }
 
     /**
-     * Uses the sorting ID for each material to compare them.
-     *
-     * @param m The other material to compare to.
-     *
-     * @return zero if the materials are equal, returns a negative value
-     * if <code>this</code> has a lower sorting ID than <code>m</code>,
-     * otherwise returns a positive value.
-     */
-    public int compareTo(Material m) {
-        return m.getSortId() - getSortId();
-    }
-
-    @Override
-    public boolean equals(Object obj) {
-        if(obj instanceof Material){
-            return ((Material)obj).compareTo(this) == 0;
-        }
-        return super.equals(obj);
-    }
-    
-    /**
      * Clones this material. The result is returned.
      */
     @Override
@@ -232,10 +211,95 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
 
             return mat;
         } catch (CloneNotSupportedException ex) {
-            throw new AssertionError();
+            throw new AssertionError(ex);
         }
     }
 
+    /**
+     * Compares two materials and returns true if they are equal. 
+     * This methods compare definition, parameters, additional render states.
+     * Since materials are mutable objects, implementing equals() properly is not possible, 
+     * hence the name contentEquals().
+     * 
+     * @param otherObj the material to compare to this material
+     * @return true if the materials are equal.
+     */
+    public boolean contentEquals(Object otherObj) {
+        if (!(otherObj instanceof Material)) {
+            return false;
+        }
+        
+        Material other = (Material) otherObj;
+        
+        // Early exit if the material are the same object
+        if (this == other) {
+            return true;
+        }
+
+        // Check material definition        
+        if (this.getMaterialDef() != other.getMaterialDef()) {
+            return false;
+        }
+
+        // Early exit if the size of the params is different
+        if (this.paramValues.size() != other.paramValues.size()) {
+            return false;
+        }
+        
+        // Checking technique
+        if (this.technique != null || other.technique != null) {
+            // Techniques are considered equal if their names are the same
+            // E.g. if user chose custom technique for one material but 
+            // uses default technique for other material, the materials 
+            // are not equal.
+            String thisDefName = this.technique != null ? this.technique.getDef().getName() : null;
+            String otherDefName = other.technique != null ? other.technique.getDef().getName() : null;
+            if (!thisDefName.equals(otherDefName)) {
+                return false;
+            }
+        }
+
+        // Comparing parameters
+        for (String paramKey : paramValues.keySet()) {
+            MatParam thisParam = this.getParam(paramKey);
+            MatParam otherParam = other.getParam(paramKey);
+
+            // This param does not exist in compared mat
+            if (otherParam == null) {
+                return false;
+            }
+
+            if (!otherParam.equals(thisParam)) {
+                return false;
+            }
+        }
+
+        // Comparing additional render states
+        if (additionalState == null) {
+            if (other.additionalState != null) {
+                return false;
+            }
+        } else {
+            if (!additionalState.equals(other.additionalState)) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    /**
+     * Works like {@link Object#hashCode() } except it may change together with the material as the material is mutable by definition.
+     */
+    public int contentHashCode() {
+        int hash = 7;
+        hash = 29 * hash + (this.def != null ? this.def.hashCode() : 0);
+        hash = 29 * hash + (this.paramValues != null ? this.paramValues.hashCode() : 0);
+        hash = 29 * hash + (this.technique != null ? this.technique.getDef().getName().hashCode() : 0);
+        hash = 29 * hash + (this.additionalState != null ? this.additionalState.contentHashCode() : 0);
+        return hash;
+    }
+    
     /**
      * Returns the currently active technique.
      * <p>
@@ -386,7 +450,7 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
 
         if (type != null && paramDef.getVarType() != type) {
             logger.log(Level.WARNING, "Material parameter being set: {0} with "
-                    + "type {1} doesn''t match definition types {2}", new Object[]{name, type.name(), paramDef.getVarType()} );
+                    + "type {1} doesn''t match definition types {2}", new Object[]{name, type.name(), paramDef.getVarType()});
         }
 
         return newName;
@@ -627,18 +691,17 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
     }
 
     /**
-     * Uploads the lights in the light list as two uniform arrays.<br/><br/>
-     *      * <p>
-     * <code>uniform vec4 g_LightColor[numLights];</code><br/>
-     * // g_LightColor.rgb is the diffuse/specular color of the light.<br/>
-     * // g_Lightcolor.a is the type of light, 0 = Directional, 1 = Point, <br/>
-     * // 2 = Spot. <br/>
-     * <br/>
-     * <code>uniform vec4 g_LightPosition[numLights];</code><br/>
-     * // g_LightPosition.xyz is the position of the light (for point lights)<br/>
-     * // or the direction of the light (for directional lights).<br/>
-     * // g_LightPosition.w is the inverse radius (1/r) of the light (for attenuation) <br/>
-     * </p>
+     * Uploads the lights in the light list as two uniform arrays.<br/><br/> *
+     * <p>
+     * <code>uniform vec4 g_LightColor[numLights];</code><br/> //
+     * g_LightColor.rgb is the diffuse/specular color of the light.<br/> //
+     * g_Lightcolor.a is the type of light, 0 = Directional, 1 = Point, <br/> //
+     * 2 = Spot. <br/> <br/>
+     * <code>uniform vec4 g_LightPosition[numLights];</code><br/> //
+     * g_LightPosition.xyz is the position of the light (for point lights)<br/>
+     * // or the direction of the light (for directional lights).<br/> //
+     * g_LightPosition.w is the inverse radius (1/r) of the light (for
+     * attenuation) <br/> </p>
      */
     protected void updateLightListUniforms(Shader shader, Geometry g, int numLights) {
         if (numLights == 0) { // this shader does not do lighting, ignore.
@@ -785,7 +848,7 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
                     //We transform the spot directoin in view space here to save 5 varying later in the lighting shader
                     //one vec4 less and a vec4 that becomes a vec3
                     //the downside is that spotAngleCos decoding happen now in the frag shader.
-                    tmpVec.set(dir2.getX(), dir2.getY(), dir2.getZ(),0);
+                    tmpVec.set(dir2.getX(), dir2.getY(), dir2.getZ(), 0);
                     rm.getCurrentCamera().getViewMatrix().mult(tmpVec, tmpVec);
                     tmpLightDirection.set(tmpVec.getX(), tmpVec.getY(), tmpVec.getZ(), spotAngleCos);
 
@@ -1064,10 +1127,10 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
         boolean guessRenderStateApply = false;
 
         int ver = ic.getSavableVersion(Material.class);
-        if (ver < 1){
+        if (ver < 1) {
             applyDefaultValues = true;
         }
-        if (ver < 2){
+        if (ver < 2) {
             guessRenderStateApply = true;
         }
         if (im.getFormatVersion() == 0) {
@@ -1117,24 +1180,24 @@ public class Material implements Asset, Cloneable, Savable, Comparable<Material>
             param.setName(checkSetParam(param.getVarType(), param.getName()));
             paramValues.put(param.getName(), param);
         }
-        
-        if (applyDefaultValues){
+
+        if (applyDefaultValues) {
             // compatability with old versions where default vars were
             // not available
-            for (MatParam param : def.getMaterialParams()){
-                if (param.getValue() != null && paramValues.get(param.getName()) == null){
+            for (MatParam param : def.getMaterialParams()) {
+                if (param.getValue() != null && paramValues.get(param.getName()) == null) {
                     setParam(param.getName(), param.getVarType(), param.getValue());
                 }
             }
         }
-        if (guessRenderStateApply && additionalState != null){
+        if (guessRenderStateApply && additionalState != null) {
             // Try to guess values of "apply" render state based on defaults
             // if value != default then set apply to true
             additionalState.applyPolyOffset = additionalState.offsetEnabled;
             additionalState.applyAlphaFallOff = additionalState.alphaTest;
             additionalState.applyAlphaTest = additionalState.alphaTest;
             additionalState.applyBlendMode = additionalState.blendMode != BlendMode.Off;
-            additionalState.applyColorWrite = !additionalState.colorWrite; 
+            additionalState.applyColorWrite = !additionalState.colorWrite;
             additionalState.applyCullMode = additionalState.cullMode != FaceCullMode.Back;
             additionalState.applyDepthTest = !additionalState.depthTest;
             additionalState.applyDepthWrite = !additionalState.depthWrite;

@@ -47,7 +47,7 @@ public class JmePaletteSetJ3M implements ActiveEditorDrop {
 
     private String createBody() {
 
-        String body = "    myj3oModel.setMaterial( (Material)assetManager.loadAsset( \"mymaterial.j3m\") );\n";
+        String body = "Material mat = assetManager.loadMaterial(\"Common/Materials/RedColor.j3m\");\n";
         return body;
     }
 

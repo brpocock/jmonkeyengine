@@ -37,7 +37,6 @@ import com.jme3.app.state.AppState;
 import com.jme3.app.state.AppStateManager;
 import com.jme3.cinematic.events.AbstractCinematicEvent;
 import com.jme3.cinematic.events.CinematicEvent;
-import com.jme3.cinematic.events.CinematicEventListener;
 import com.jme3.export.*;
 import com.jme3.renderer.Camera;
 import com.jme3.renderer.RenderManager;
@@ -68,7 +67,6 @@ public class Cinematic extends AbstractCinematicEvent implements AppState {
     private CameraNode currentCam;
     private boolean initialized = false;
     private Map<String, Map<String, Object>> eventsData;
-    private int scheduledPause = -1;
 
     public Cinematic() {
     }
@@ -95,8 +93,6 @@ public class Cinematic extends AbstractCinematicEvent implements AppState {
     @Override
     public void onPlay() {
         if (isInitialized()) {
-            scheduledPause = -1;
-            //enableCurrentCam(true);
             if (playState == PlayState.Paused) {
                 for (int i = 0; i < cinematicEvents.size(); i++) {
                     CinematicEvent ce = cinematicEvents.get(i);
@@ -114,6 +110,7 @@ public class Cinematic extends AbstractCinematicEvent implements AppState {
         lastFetchedKeyFrame = -1;
         for (int i = 0; i < cinematicEvents.size(); i++) {
             CinematicEvent ce = cinematicEvents.get(i);
+            ce.setTime(0);
             ce.stop();
         }
         enableCurrentCam(false);
@@ -197,22 +194,8 @@ public class Cinematic extends AbstractCinematicEvent implements AppState {
         }
     }
 
-    private void step() {
-        if (playState != PlayState.Playing) {
-            play();
-            scheduledPause = 2;
-        }
-    }
-
     @Override
     public void onUpdate(float tpf) {
-        if (scheduledPause >= 0) {
-            if (scheduledPause == 0) {
-                pause();
-            }
-            scheduledPause--;
-        }
-
         for (int i = 0; i < cinematicEvents.size(); i++) {
             CinematicEvent ce = cinematicEvents.get(i);
             ce.internalUpdate(tpf);
@@ -233,24 +216,30 @@ public class Cinematic extends AbstractCinematicEvent implements AppState {
 
     @Override
     public void setTime(float time) {
-        super.setTime(time);     
-        int keyFrameIndex = timeLine.getKeyFrameIndexFromTime(time);
 
+        //stopping all events
+        onStop();
+        super.setTime(time);
+
+        int keyFrameIndex = timeLine.getKeyFrameIndexFromTime(time);
         //triggering all the event from start to "time" 
         //then computing timeOffset for each event
         for (int i = 0; i <= keyFrameIndex; i++) {
             KeyFrame keyFrame = timeLine.get(i);
             if (keyFrame != null) {
                 for (CinematicEvent ce : keyFrame.getCinematicEvents()) {
-                    if (playState == PlayState.Playing) {
+                    float t = this.time - timeLine.getKeyFrameTime(keyFrame);
+                    if (t >= 0 && (t <= ce.getInitialDuration() || ce.getLoopMode() != LoopMode.DontLoop)) {
                         ce.play();
                     }
-                    ce.setTime(time - timeLine.getKeyFrameTime(keyFrame));
+                    ce.setTime(t);
                 }
             }
         }
-
-        step();
+        lastFetchedKeyFrame = keyFrameIndex;
+        if (playState != PlayState.Playing) {
+            pause();
+        }
     }
 
     public KeyFrame addCinematicEvent(float timeStamp, CinematicEvent cinematicEvent) {

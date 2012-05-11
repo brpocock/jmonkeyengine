@@ -84,7 +84,7 @@ float Shadow_DoBilinear_2x2(in SHADOWMAP tex, in vec4 projCoord){
 
     ivec2 texSize = textureSize(tex, 0);
     #ifdef GL_ARB_gpu_shader5
-        vec4 coord = vec4(projCoord.xyz / projCoord.w,0.0);
+        vec4 coord = vec4(projCoord.xyz / projCoord.www,0.0);
         vec4 gather = SHADOWGATHER(tex, coord);
     #else
         vec4 gather = vec4(0.0);
@@ -120,9 +120,28 @@ float Shadow_DoPCF(in SHADOWMAP tex, in vec4 projCoord){
     return shadow;
 }
 
+
+#ifdef COLOR_MAP
+    uniform sampler2D m_ColorMap;
+    varying vec2 texCoord;
+#endif    
+#ifdef DIFFUSEMAP  
+    uniform sampler2D m_DiffuseMap;
+    varying vec2 texCoord;
+#endif
+ 
 void main(){
     float shadow = 0.0;
 
+    float alpha = 1.0;
+    
+    #ifdef COLOR_MAP
+          alpha = texture2D(m_ColorMap,texCoord).a;
+    #endif
+    #ifdef DIFFUSEMAP   
+          alpha = texture2D(m_DiffuseMap,texCoord).a;
+    #endif
+    
     if(shadowPosition < m_Splits.x){
         shadow = GETSHADOW(m_ShadowMap0, projCoord0);
     }else if( shadowPosition <  m_Splits.y){
@@ -134,6 +153,6 @@ void main(){
     }
     
     shadow = shadow * m_ShadowIntensity + (1.0 - m_ShadowIntensity);
-    outFragColor = vec4(shadow, shadow, shadow, 1.0);
+    outFragColor =  vec4(0.0, 0.0, 0.0, min(1.0 - shadow,alpha));
 }
 

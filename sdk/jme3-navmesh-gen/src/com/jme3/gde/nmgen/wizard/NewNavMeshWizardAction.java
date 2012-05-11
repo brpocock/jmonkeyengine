@@ -10,6 +10,7 @@ import com.jme3.gde.core.sceneexplorer.nodes.actions.NewSpatialAction;
 import com.jme3.gde.nmgen.NavMeshGenerator;
 import com.jme3.material.Material;
 import com.jme3.math.ColorRGBA;
+import com.jme3.math.Vector3f;
 import com.jme3.scene.Geometry;
 import com.jme3.scene.Mesh;
 import com.jme3.scene.Node;
@@ -25,6 +26,8 @@ import java.util.List;
 import javax.swing.JComponent;
 import jme3tools.optimize.GeometryBatchFactory;
 import org.critterai.nmgen.IntermediateData;
+import org.netbeans.api.progress.ProgressHandle;
+import org.netbeans.api.progress.ProgressHandleFactory;
 import org.openide.DialogDisplayer;
 import org.openide.WizardDescriptor;
 
@@ -32,6 +35,7 @@ import org.openide.WizardDescriptor;
 public final class NewNavMeshWizardAction extends AbstractNewSpatialWizardAction {
 
     private WizardDescriptor.Panel[] panels;
+    private NavMeshGenerator generator;
 
     public NewNavMeshWizardAction() {
         name = "NavMesh..";
@@ -43,8 +47,9 @@ public final class NewNavMeshWizardAction extends AbstractNewSpatialWizardAction
         // {0} will be replaced by WizardDesriptor.Panel.getComponent().getName()
         wizardDescriptor.setTitleFormat(new MessageFormat("{0}"));
         wizardDescriptor.setTitle("Create NavMesh");
-        NavMeshGenerator gen = new NavMeshGenerator();
-        wizardDescriptor.putProperty("generator", gen);
+        if (generator == null)
+            generator = new NavMeshGenerator();
+        wizardDescriptor.putProperty("generator", generator);
 
         Dialog dialog = DialogDisplayer.getDefault().createDialog(wizardDescriptor);
         dialog.setVisible(true);
@@ -61,46 +66,58 @@ public final class NewNavMeshWizardAction extends AbstractNewSpatialWizardAction
         if (configuration == null) {
             return null;
         }
-        //TODO: maybe offload to other thread..
-        WizardDescriptor wizardDescriptor = (WizardDescriptor) configuration;
-
-        NavMeshGenerator generator = (NavMeshGenerator) wizardDescriptor.getProperty("generator");
-        IntermediateData id = new IntermediateData();
-
-        generator.setIntermediateData(null);
-
-        Mesh mesh = new Mesh();
-
-        GeometryBatchFactory.mergeGeometries(findGeometries(rootNode, new LinkedList<Geometry>(), generator), mesh);
-        Mesh optiMesh = generator.optimize(mesh);
-        if(optiMesh == null) return null;
-
+        ProgressHandle progressHandle = ProgressHandleFactory.createHandle("Generating NavMesh");
+        progressHandle.start();
         final Geometry navMesh = new Geometry("NavMesh");
-        Material material = new Material(pm, "Common/MatDefs/Misc/Unshaded.j3md");
-        material.getAdditionalRenderState().setWireframe(true);
-        material.setColor("Color", ColorRGBA.Green);
-        navMesh.setMaterial(material);
-        navMesh.setMesh(optiMesh);
-        navMesh.setCullHint(CullHint.Always);
-        navMesh.setModelBound(new BoundingBox());
+        try {
+            //TODO: maybe offload to other thread..
+            WizardDescriptor wizardDescriptor = (WizardDescriptor) configuration;
+
+            NavMeshGenerator generator = (NavMeshGenerator) wizardDescriptor.getProperty("generator");
+            IntermediateData id = new IntermediateData();
+
+            generator.setIntermediateData(null);
+
+            Mesh mesh = new Mesh();
+
+            GeometryBatchFactory.mergeGeometries(findGeometries(rootNode, new LinkedList<Geometry>(), generator, rootNode), mesh);
+            Mesh optiMesh = generator.optimize(mesh);
+            if(optiMesh == null) return null;
+
+            Material material = new Material(pm, "Common/MatDefs/Misc/Unshaded.j3md");
+            material.getAdditionalRenderState().setWireframe(true);
+            material.setColor("Color", ColorRGBA.Green);
+            navMesh.setMaterial(material);
+            navMesh.setMesh(optiMesh);
+            navMesh.setCullHint(CullHint.Always);
+            navMesh.setModelBound(new BoundingBox());
+        } finally {
+            progressHandle.finish();
+        }
 
         return navMesh;
     }
 
-    private List<Geometry> findGeometries(Node node, List<Geometry> geoms, NavMeshGenerator generator) {
+    private List<Geometry> findGeometries(Node node, List<Geometry> geoms, NavMeshGenerator generator, Node originalRoot) {
+        if (node instanceof Terrain) {
+            Terrain terr = (Terrain)node;
+            Mesh merged = generator.terrain2mesh(terr);
+            Geometry g = new Geometry("mergedTerrain");
+            g.setMesh(merged);
+            if (node != originalRoot) {
+                g.setLocalScale(((Node)terr).getLocalScale());
+                g.setLocalTranslation(((Node)terr).getLocalTranslation());
+            }
+            geoms.add(g);
+            return geoms;
+        }
+        
         for (Iterator<Spatial> it = node.getChildren().iterator(); it.hasNext();) {
             Spatial spatial = it.next();
             if (spatial instanceof Geometry) {
                 geoms.add((Geometry) spatial);
             } else if (spatial instanceof Node) {
-                if (spatial instanceof Terrain) {
-                    Mesh merged = generator.terrain2mesh((Terrain) spatial);
-                    Geometry g = new Geometry("mergedTerrain");
-                    g.setMesh(merged);
-                    geoms.add(g);
-                } else {
-                    findGeometries((Node) spatial, geoms, generator);
-                }
+                findGeometries((Node) spatial, geoms, generator, originalRoot);
             }
         }
         return geoms;

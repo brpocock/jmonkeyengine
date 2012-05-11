@@ -44,11 +44,11 @@ public class TestAbsoluteLocators {
     public static void main(String[] args){
         AssetManager am = new DesktopAssetManager();
 
-        am.registerLoader(AWTLoader.class.getName(), "jpg");
-        am.registerLoader(WAVLoader.class.getName(), "wav");
+        am.registerLoader(AWTLoader.class, "jpg");
+        am.registerLoader(WAVLoader.class, "wav");
 
         // register absolute locator
-        am.registerLocator("/",  ClasspathLocator.class.getName());
+        am.registerLocator("/",  ClasspathLocator.class);
 
         // find a sound
         AudioData audio = am.loadAudio("Sound/Effects/Gun.wav");

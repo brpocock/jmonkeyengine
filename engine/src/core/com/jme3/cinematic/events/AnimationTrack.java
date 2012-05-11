@@ -108,20 +108,34 @@ public class AnimationTrack extends AbstractCinematicEvent {
     @Override
     public void setTime(float time) {
         super.setTime(time);
+        if (channel.getAnimationName() == null) {
+            channel.setAnim(animationName);
+        }
         float t = time;
-        if(loopMode == loopMode.Loop){
+        if (loopMode == loopMode.Loop) {
             t = t % channel.getAnimMaxTime();
         }
-        if(loopMode == loopMode.Cycle){
-            float parity = (float)Math.ceil(time / channel.getAnimMaxTime());
-            if(parity >0 && parity%2 ==0){
+        if (loopMode == loopMode.Cycle) {
+            float parity = (float) Math.ceil(time / channel.getAnimMaxTime());
+            if (parity > 0 && parity % 2 == 0) {
                 t = channel.getAnimMaxTime() - t % channel.getAnimMaxTime();
-            }else{
+            } else {
                 t = t % channel.getAnimMaxTime();
             }
-            
+
         }
-        channel.setTime(t);
+        if (t < 0) {
+            channel.setTime(0);
+            channel.reset(true);
+        }
+        if (t > channel.getAnimMaxTime()) {
+            channel.setTime(t);
+            channel.getControl().update(0);
+            stop();
+        } else {
+            channel.setTime(t);
+            channel.getControl().update(0);
+        }
     }
 
     @Override
@@ -136,24 +150,38 @@ public class AnimationTrack extends AbstractCinematicEvent {
     }
 
     @Override
+    public void setSpeed(float speed) {
+        super.setSpeed(speed);
+        if (channel != null) {
+            channel.setSpeed(speed);
+        }
+    }
+
+    @Override
     public void onUpdate(float tpf) {
     }
 
     @Override
     public void onStop() {
-        channel.getControl().setEnabled(false);
-        channel.setTime(0);
+        if (channel != null) {
+            channel.setTime(0);
+            channel.reset(false);
+        }
     }
 
     @Override
     public void onPause() {
-        channel.getControl().setEnabled(false);
+        if (channel != null) {
+            channel.getControl().setEnabled(false);
+        }
     }
 
     @Override
     public void setLoopMode(LoopMode loopMode) {
         super.setLoopMode(loopMode);
-        channel.setLoopMode(loopMode);
+        if (channel != null) {
+            channel.setLoopMode(loopMode);
+        }
     }
 
     @Override

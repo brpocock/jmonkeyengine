@@ -99,14 +99,13 @@ public class SceneComposerToolController extends SceneToolController {
     @Override
     public void update(float tpf) {
         super.update(tpf);
+        if (editTool != null) {
+            editTool.doUpdateToolsTransformation();
+        }
         if (onTopToolsNode != null) {
             onTopToolsNode.updateLogicalState(tpf);
             onTopToolsNode.updateGeometricState();
         }
-        if (editTool != null) {
-            editTool.updateToolsTransformation();
-        }
-
     }
 
     @Override
@@ -154,13 +153,7 @@ public class SceneComposerToolController extends SceneToolController {
 
     public void selectedSpatialTransformed() {
         if (editTool != null) {
-            SceneApplication.getApplication().enqueue(new Callable<Object>() {
-
-                public Object call() throws Exception {
-                    editTool.updateToolsTransformation();
-                    return null;
-                }
-            });
+            editTool.updateToolsTransformation();
         }
     }
 

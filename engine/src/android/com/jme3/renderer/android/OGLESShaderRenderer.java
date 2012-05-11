@@ -31,11 +31,10 @@
  */
 package com.jme3.renderer.android;
 
-import android.graphics.Bitmap;
 import android.opengl.GLES10;
-import android.opengl.GLES11;
 import android.opengl.GLES20;
 import android.os.Build;
+import com.jme3.asset.AndroidImageInfo;
 import com.jme3.light.LightList;
 import com.jme3.material.RenderState;
 import com.jme3.math.*;
@@ -59,14 +58,12 @@ import com.jme3.texture.Texture.WrapAxis;
 import com.jme3.util.BufferUtils;
 import com.jme3.util.ListMap;
 import com.jme3.util.NativeObjectManager;
-import com.jme3.util.SafeArrayList;
 import java.nio.*;
-import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import javax.microedition.khronos.opengles.GL10;
+import jme3tools.shader.ShaderDebug;
 
 public class OGLESShaderRenderer implements Renderer {
 
@@ -102,9 +99,11 @@ public class OGLESShaderRenderer implements Renderer {
     private int vpX, vpY, vpW, vpH;
     private int clipX, clipY, clipW, clipH;
     //private final GL10 gl;
+    private boolean powerVr = false;
     private boolean powerOf2 = false;
     private boolean verboseLogging = false;
     private boolean useVBO = false;
+    private boolean checkErrors = true;
 
     public OGLESShaderRenderer() {
     }
@@ -130,6 +129,19 @@ public class OGLESShaderRenderer implements Renderer {
 
         nameBuf.rewind();
     }
+    
+    private void checkGLError() {
+        if (!checkErrors) return;
+        int error;
+        while ((error = GLES20.glGetError()) != GLES20.GL_NO_ERROR) {
+            throw new RendererException("OpenGL Error " + error);
+        }
+    }
+
+    private boolean log(String message) {
+        logger.info(message);
+        return true;
+    }
 
     public Statistics getStatistics() {
         return statistics;
@@ -145,6 +157,8 @@ public class OGLESShaderRenderer implements Renderer {
         logger.log(Level.INFO, "Renderer: {0}", GLES20.glGetString(GLES20.GL_RENDERER));
         logger.log(Level.INFO, "Version: {0}", GLES20.glGetString(GLES20.GL_VERSION));
 
+        powerVr = GLES20.glGetString(GLES20.GL_RENDERER).contains("PowerVR");
+        
         String versionStr = GLES20.glGetString(GLES20.GL_SHADING_LANGUAGE_VERSION);
         logger.log(Level.INFO, "GLES20.Shading Language Version: {0}", versionStr);
         if (versionStr == null || versionStr.equals("")) {
@@ -342,23 +356,9 @@ public class OGLESShaderRenderer implements Renderer {
         }
 
         applyRenderState(RenderState.DEFAULT);
-//        GLES20.glClearDepthf(1.0f);
-
-        if (verboseLogging) {
-            logger.info("GLES20.glDisable(GL10.GL_DITHER)");
-        }
-
-        GLES20.glDisable(GL10.GL_DITHER);
+        GLES20.glDisable(GLES20.GL_DITHER);
 
         checkGLError();
-
-        if (verboseLogging) {
-            logger.info("GLES20.glHint(GL10.GL_PERSPECTIVE_CORRECTION_HINT, GL10.GL_FASTEST)");
-        }
-
-        GLES20.glHint(GL10.GL_PERSPECTIVE_CORRECTION_HINT, GL10.GL_FASTEST);
-
-//	checkGLError();
 
         useVBO = false;
         
@@ -369,7 +369,7 @@ public class OGLESShaderRenderer implements Renderer {
             useVBO = true;
         }
         
-        logger.log(Level.INFO, "Caps: {0}", caps);
+        logger.log(Level.INFO, "Caps: {0}", caps);        
     }
 
     /**
@@ -722,8 +722,14 @@ public class OGLESShaderRenderer implements Renderer {
     }
 
     public void onFrame() {
+        if (!checkErrors){
+            int error = GLES20.glGetError();
+            if (error != GLES20.GL_NO_ERROR){
+                throw new RendererException("OpenGL Error " + error + ". Enable error checking for more info.");
+            }
+        }
         objManager.deleteUnused(this);
-//        statistics.clearFrame();
+//      statistics.clearFrame();
     }
 
     public void setWorldMatrix(Matrix4f worldMatrix) {
@@ -987,11 +993,19 @@ public class OGLESShaderRenderer implements Renderer {
             logger.info("GLES20.glShaderSource(" + id + ")");
         }
 
-        GLES20.glShaderSource(
-                id,
-                "precision mediump float;\n"
-                + source.getDefines()
-                + source.getSource());
+        if (powerVr && source.getType() == ShaderType.Vertex) {
+            // XXX: This is to fix a bug in old PowerVR, remove
+            // when no longer applicable.
+            GLES20.glShaderSource(
+                    id, source.getDefines()
+                    + source.getSource());
+        } else {
+            GLES20.glShaderSource(
+                    id,
+                    "precision mediump float;\n"
+                    + source.getDefines()
+                    + source.getSource());
+        }
 
         checkGLError();
 
@@ -1036,8 +1050,8 @@ public class OGLESShaderRenderer implements Renderer {
                 logger.log(Level.FINE, "compile success: " + source.getName());
             }
         } else {
-           logger.log(Level.WARNING, "Bad compile of:\n{0}{1}",
-                    new Object[]{source.getDefines(), source.getSource()});
+           logger.log(Level.WARNING, "Bad compile of:\n{0}",
+                    new Object[]{ShaderDebug.formatShaderSource(source.getDefines(), source.getSource(),stringBuf.toString())});
             if (infoLog != null) {
                 throw new RendererException("compile error in:" + source + " error:" + infoLog);
             } else {
@@ -1746,10 +1760,8 @@ public class OGLESShaderRenderer implements Renderer {
 
     private int convertWrapMode(Texture.WrapMode mode) {
         switch (mode) {
-//            case BorderClamp:
-//                return GLES20.GL_CLAMP_TO_BORDER;
-//            case Clamp:
-//                return GLES20.GL_CLAMP;
+            case BorderClamp:
+            case Clamp:
             case EdgeClamp:
                 return GLES20.GL_CLAMP_TO_EDGE;
             case Repeat:
@@ -1884,7 +1896,7 @@ public class OGLESShaderRenderer implements Renderer {
         if (target == GLES20.GL_TEXTURE_CUBE_MAP) {
             // Upload a cube map / sky box
             @SuppressWarnings("unchecked")
-            List<Bitmap> bmps = (List<Bitmap>) img.getEfficentData();
+            List<AndroidImageInfo> bmps = (List<AndroidImageInfo>) img.getEfficentData();
             if (bmps != null) {
                 // Native android bitmap                                       
                 if (bmps.size() != 6) {
@@ -1892,7 +1904,7 @@ public class OGLESShaderRenderer implements Renderer {
                             + "Cubemap textures must contain 6 data units.");
                 }
                 for (int i = 0; i < 6; i++) {
-                    TextureUtil.uploadTextureBitmap(GLES20.GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, bmps.get(i), false, powerOf2);
+                    TextureUtil.uploadTextureBitmap(GLES20.GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, bmps.get(i).getBitmap(), false, powerOf2);
                 }
             } else {
                 // Standard jme3 image data
@@ -2524,7 +2536,7 @@ public class OGLESShaderRenderer implements Renderer {
                     logger.log(Level.INFO, "glDrawElements(), indexBuf.capacity ({0}), vertCount ({1})", new Object[]{indexBuf.getData().capacity(), vertCount});
                 }
 
-                GLES11.glDrawElements(
+                GLES20.glDrawElements(
                         convertElementMode(mesh.getMode()),
                         indexBuf.getData().capacity(),
                         convertFormat(indexBuf.getFormat()),
@@ -2738,19 +2750,6 @@ public class OGLESShaderRenderer implements Renderer {
         }
 
 //        }
-    }
-
-    private void checkGLError() {
-        int error;
-        while ((error = GLES20.glGetError()) != GLES20.GL_NO_ERROR) {
-            logger.log(Level.WARNING, "glError {0}", error);
-            //	throw new RuntimeException("glError " + error);
-        }
-    }
-
-    private boolean log(String message) {
-        logger.info(message);
-        return true;
     }
 
     /**

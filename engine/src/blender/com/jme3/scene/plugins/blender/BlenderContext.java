@@ -46,13 +46,13 @@ import com.jme3.asset.AssetManager;
 import com.jme3.asset.BlenderKey;
 import com.jme3.material.Material;
 import com.jme3.math.ColorRGBA;
+import com.jme3.scene.plugins.blender.animations.BoneContext;
 import com.jme3.scene.plugins.blender.animations.Ipo;
 import com.jme3.scene.plugins.blender.constraints.Constraint;
 import com.jme3.scene.plugins.blender.file.BlenderInputStream;
 import com.jme3.scene.plugins.blender.file.DnaBlockData;
 import com.jme3.scene.plugins.blender.file.FileBlockHeader;
 import com.jme3.scene.plugins.blender.file.Structure;
-import com.jme3.scene.plugins.blender.materials.MaterialContext;
 import com.jme3.scene.plugins.blender.meshes.MeshContext;
 import com.jme3.scene.plugins.blender.modifiers.Modifier;
 import com.jme3.scene.plugins.ogre.AnimData;
@@ -67,6 +67,8 @@ import com.jme3.scene.plugins.ogre.AnimData;
 public class BlenderContext {
 	private static final Logger					LOGGER					= Logger.getLogger(BlenderContext.class.getName());
 
+	/** The blender file version. */
+	private int									blenderVersion;
 	/** The blender key. */
 	private BlenderKey							blenderKey;
 	/** The header of the file block. */
@@ -112,10 +114,27 @@ public class BlenderContext {
 	private Map<Long, Skeleton>					skeletons				= new HashMap<Long, Skeleton>();
 	/** A map of mesh contexts. */
 	protected Map<Long, MeshContext>			meshContexts			= new HashMap<Long, MeshContext>();
-	/** A map of material contexts. */
-	protected Map<Material, MaterialContext>	materialContexts		= new HashMap<Material, MaterialContext>();
+	/** A map of bone contexts. */
+	protected Map<Long, BoneContext>			boneContexts			= new HashMap<Long, BoneContext>();
 	/** A map og helpers that perform loading. */
 	private Map<String, AbstractBlenderHelper>	helpers					= new HashMap<String, AbstractBlenderHelper>();
+
+	/**
+	 * This method sets the blender file version.
+	 * 
+	 * @param blenderVersion
+	 *            the blender file version
+	 */
+	public void setBlenderVersion(String blenderVersion) {
+		this.blenderVersion = Integer.parseInt(blenderVersion);
+	}
+
+	/**
+	 * @return the blender file version
+	 */
+	public int getBlenderVersion() {
+		return blenderVersion;
+	}
 
 	/**
 	 * This method sets the blender key.
@@ -493,7 +512,7 @@ public class BlenderContext {
 	public AnimData getAnimData(Long ownerOMA) {
 		return this.animData.get(ownerOMA);
 	}
-	
+
 	/**
 	 * This method sets the skeleton for the specified OMA of its owner.
 	 * 
@@ -505,7 +524,7 @@ public class BlenderContext {
 	public void setSkeleton(Long skeletonOMA, Skeleton skeleton) {
 		this.skeletons.put(skeletonOMA, skeleton);
 	}
-	
+
 	/**
 	 * This method returns the skeleton for the specified OMA of its owner.
 	 * 
@@ -543,28 +562,28 @@ public class BlenderContext {
 	}
 
 	/**
-	 * This method sets the material context for the given material. If the
-	 * context is already set it will be replaced.
+	 * This method sets the bone context for the given bone old memory address.
+	 * If the context is already set it will be replaced.
 	 * 
-	 * @param material
-	 *            the material
-	 * @param materialContext
-	 *            the material's context
+	 * @param boneOMA
+	 *            the bone's old memory address
+	 * @param boneContext
+	 *            the bones's context
 	 */
-	public void setMaterialContext(Material material, MaterialContext materialContext) {
-		this.materialContexts.put(material, materialContext);
+	public void setBoneContext(Long boneOMA, BoneContext boneContext) {
+		this.boneContexts.put(boneOMA, boneContext);
 	}
 
 	/**
-	 * This method returns the material context for the given material. If no
-	 * context exists then <b>null</b> is returned.
+	 * This method returns the bone context for the given bone old memory
+	 * address. If no context exists then <b>null</b> is returned.
 	 * 
-	 * @param material
-	 *            the material
-	 * @return material's context
+	 * @param boneOMA
+	 *            the bone's old memory address
+	 * @return bone's context
 	 */
-	public MaterialContext getMaterialContext(Material material) {
-		return materialContexts.get(material);
+	public BoneContext getBoneContext(Long boneOMA) {
+		return boneContexts.get(boneOMA);
 	}
 
 	/**

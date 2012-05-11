@@ -1,12 +1,7 @@
 package jme3tools.navigation;
+
 import java.awt.Point;
 import java.text.DecimalFormat;
-
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
-
 
 /**
  * A representation of the actual map in terms of lat/long and x,y co-ordinates.
@@ -295,7 +290,7 @@ public class MapModel2D {
 
     /**
      * Returns the pixel (x,y) centre of the map
-     * @return {@link Point) object marking the map's (x,y) centre
+     * @return {@link Point} object marking the map's (x,y) centre
      * @since 1.0
      */
     public Point getPixelCentre() {

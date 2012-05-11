@@ -61,23 +61,20 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
+ * <p>
  * A terrain quad is a node in the quad tree of the terrain system.
  * The root terrain quad will be the only one that receives the update() call every frame
  * and it will determine if there has been any LOD change.
- *
+ * </p><p>
  * The leaves of the terrain quad tree are Terrain Patches. These have the real geometry mesh.
- *
- * 
+ * </p><p>
  * Heightmap coordinates start from the bottom left of the world and work towards the
  * top right.
- * 
+ * </p><pre>
  *  +x
  *  ^
  *  | ......N = length of heightmap
@@ -86,11 +83,10 @@ import java.util.logging.Logger;
  *  | 0.....:
  *  +---------> +z
  * (world coordinates)
- * 
+ * </pre>
  * @author Brent Owens
  */
 public class TerrainQuad extends Node implements Terrain {
-
     protected Vector2f offset;
 
     protected int totalSize; // the size of this entire terrain tree (on one side)
@@ -104,33 +100,11 @@ public class TerrainQuad extends Node implements Terrain {
     protected float offsetAmount;
 
     protected int quadrant = 0; // 1=upper left, 2=lower left, 3=upper right, 4=lower right
-
-    //protected LodCalculatorFactory lodCalculatorFactory;
-    //protected LodCalculator lodCalculator;
-    
-    protected List<Vector3f> lastCameraLocations; // used for LOD calc
-    private boolean lodCalcRunning = false;
-    private int lodOffCount = 0;
     private int maxLod = -1;
-    private HashMap<String,UpdatedTerrainPatch> updatedPatches;
-    private final Object updatePatchesLock = new Object();
     private BoundingBox affectedAreaBBox; // only set in the root quad
 
     private TerrainPicker picker;
     private Vector3f lastScale = Vector3f.UNIT_XYZ;
-
-    protected ExecutorService executor;
-
-    protected ExecutorService createExecutorService() {
-        return Executors.newSingleThreadExecutor(new ThreadFactory() {
-            public Thread newThread(Runnable r) {
-                Thread th = new Thread(r);
-                th.setName("jME Terrain Thread");
-                th.setDaemon(true);
-                return th;
-            }
-        });
-    }
 
     public TerrainQuad() {
         super("Terrain");
@@ -220,41 +194,22 @@ public class TerrainQuad extends Node implements Terrain {
         this.size = quadSize;
         this.patchSize = patchSize;
         this.stepScale = scale;
-        //this.lodCalculatorFactory = lodCalculatorFactory;
-        //this.lodCalculator = lodCalculator;
         split(patchSize, heightMap);
     }
 
-    /*public void setLodCalculatorFactory(LodCalculatorFactory lodCalculatorFactory) {
-        if (children != null) {
-            for (int i = children.size(); --i >= 0;) {
-                Spatial child = children.get(i);
-                if (child instanceof TerrainQuad) {
-                    ((TerrainQuad) child).setLodCalculatorFactory(lodCalculatorFactory);
-                } else if (child instanceof TerrainPatch) {
-                    ((TerrainPatch) child).setLodCalculator(lodCalculatorFactory.createCalculator((TerrainPatch) child));
-                }
-            }
-        }
-    }*/
-
-
+    /**
+     * Forces the recalculation of all normals on the terrain.
+     */
+    public void recalculateAllNormals() {
+        affectedAreaBBox = new BoundingBox(new Vector3f(0,0,0), totalSize*2, Float.MAX_VALUE, totalSize*2);
+    }
+    
     /**
      * Create just a flat heightmap
      */
     private float[] generateDefaultHeightMap(int size) {
         float[] heightMap = new float[size*size];
         return heightMap;
-    }
-
-     /**
-      * Call from the update() method of a terrain controller to update
-      * the LOD values of each patch.
-      * This will perform the geometry calculation in a background thread and
-      * do the actual update on the opengl thread.
-      */
-    public void update(List<Vector3f> locations, LodCalculator lodCalculator) {
-        updateLOD(locations, lodCalculator);
     }
 
     /**
@@ -271,73 +226,20 @@ public class TerrainQuad extends Node implements Terrain {
             setNormalRecalcNeeded(null); // set to false
         }
     }
-
-    // do all of the LOD calculations
-    protected void updateLOD(List<Vector3f> locations, LodCalculator lodCalculator) {
-        // update any existing ones that need updating
-        updateQuadLODs();
-
-        if (lodCalculator.isLodOff()) {
-            // we want to calculate the base lod at least once
-            if (lodOffCount == 1)
-                return;
-            else
-                lodOffCount++;
-        } else 
-            lodOffCount = 0;
-        
-        if (lastCameraLocations != null) {
-            if (lastCameraLocationsTheSame(locations) && !lodCalculator.isLodOff())
-                return; // don't update if in same spot
-            else
-                lastCameraLocations = cloneVectorList(locations);
-        }
-        else {
-            lastCameraLocations = cloneVectorList(locations);
-            return;
-        }
-
-        if (isLodCalcRunning()) {
-            return;
-        }
-
-        if (getParent() instanceof TerrainQuad) {
-            return; // we just want the root quad to perform this.
-        }
-
-        if (executor == null)
-            executor = createExecutorService();
-        
-        UpdateLOD updateLodThread = new UpdateLOD(locations, lodCalculator);
-        executor.execute(updateLodThread);
-    }
-
-    private synchronized boolean isLodCalcRunning() {
-        return lodCalcRunning;
-    }
-
-    private synchronized void setLodCalcRunning(boolean running) {
-        lodCalcRunning = running;
-    }
-
-    private List<Vector3f> cloneVectorList(List<Vector3f> locations) {
-        List<Vector3f> cloned = new ArrayList<Vector3f>();
-        for(Vector3f l : locations)
-            cloned.add(l.clone());
-        return cloned;
-    }
-
-    private boolean lastCameraLocationsTheSame(List<Vector3f> locations) {
-        boolean theSame = true;
-        for (Vector3f l : locations) {
-            for (Vector3f v : lastCameraLocations) {
-                if (!v.equals(l) ) {
-                    theSame = false;
-                    return false;
-                }
+    
+    /**
+     * Caches the transforms (except rotation) so the LOD calculator,
+     * which runs on a separate thread, can access them safely.
+     */
+    protected void cacheTerrainTransforms() {
+        for (int i = children.size(); --i >= 0;) {
+            Spatial child = children.get(i);
+            if (child instanceof TerrainQuad) {
+                ((TerrainQuad) child).cacheTerrainTransforms();
+            } else if (child instanceof TerrainPatch) {
+                ((TerrainPatch) child).cacheTerrainTransforms();
             }
         }
-        return theSame;
     }
 
     private int collideWithRay(Ray ray, CollisionResults results) {
@@ -406,86 +308,10 @@ public class TerrainQuad extends Node implements Terrain {
         return null;
     }
 
-    //public float getTextureCoordinateScale() {
-    //    return 1f/(float)totalSize;
-    //}
     public int getNumMajorSubdivisions() {
         return 1;
     }
-
-    /**
-     * Calculates the LOD of all child terrain patches.
-     */
-    private class UpdateLOD implements Runnable {
-        private List<Vector3f> camLocations;
-        private LodCalculator lodCalculator;
-
-        UpdateLOD(List<Vector3f> camLocations, LodCalculator lodCalculator) {
-            this.camLocations = camLocations;
-            this.lodCalculator = lodCalculator;
-        }
-
-        public void run() {
-            long start = System.currentTimeMillis();
-            if (isLodCalcRunning()) {
-                //System.out.println("thread already running");
-                return;
-            }
-            //System.out.println("spawned thread "+toString());
-            setLodCalcRunning(true);
-
-            // go through each patch and calculate its LOD based on camera distance
-            HashMap<String,UpdatedTerrainPatch> updated = new HashMap<String,UpdatedTerrainPatch>();
-            boolean lodChanged = calculateLod(camLocations, updated, lodCalculator); // 'updated' gets populated here
-
-            if (!lodChanged) {
-                // not worth updating anything else since no one's LOD changed
-                setLodCalcRunning(false);
-                return;
-            }
-            // then calculate its neighbour LOD values for seaming in the shader
-            findNeighboursLod(updated);
-
-            fixEdges(updated); // 'updated' can get added to here
-
-            reIndexPages(updated, lodCalculator.usesVariableLod());
-
-            setUpdateQuadLODs(updated); // set back to main ogl thread
-
-            setLodCalcRunning(false);
-            //double duration = (System.currentTimeMillis()-start);
-            //System.out.println("terminated in "+duration);
-        }
-    }
-
-    private void setUpdateQuadLODs(HashMap<String,UpdatedTerrainPatch> updated) {
-        synchronized (updatePatchesLock) {
-            updatedPatches = updated;
-        }
-    }
-
-    /**
-     * Back on the ogl thread: update the terrain patch geometries
-     * @param updatedPatches to be updated
-     */
-    private void updateQuadLODs() {
-        synchronized (updatePatchesLock) {
-            
-            if (updatedPatches == null || updatedPatches.isEmpty())
-                return;
-
-            // do the actual geometry update here
-            for (UpdatedTerrainPatch utp : updatedPatches.values()) {
-                utp.updateAll();
-            }
-
-            updatedPatches.clear();
-        }
-    }
     
-    public boolean hasPatchesToUpdate() {
-        return updatedPatches != null && !updatedPatches.isEmpty();
-    }
 
     protected boolean calculateLod(List<Vector3f> location, HashMap<String,UpdatedTerrainPatch> updates, LodCalculator lodCalculator) {
 
@@ -1095,44 +921,88 @@ public class TerrainQuad extends Node implements Terrain {
         return null;
     }
 
+    /**
+     * Used for searching for a child and keeping
+     * track of its quadrant
+     */
+    private class QuadrantChild {
+        int col;
+        int row;
+        Spatial child;
+        
+        QuadrantChild(int col, int row, Spatial child) {
+            this.col = col;
+            this.row = row;
+            this.child = child;
+        }
+    }
+    
+    private QuadrantChild findMatchingChild(int x, int z) {
+        int quad = findQuadrant(x, z);
+        int split = (size + 1) >> 1;
+        if (children != null) {
+            for (int i = children.size(); --i >= 0;) {
+                Spatial spat = children.get(i);
+                int col = x;
+                int row = z;
+                boolean match = false;
+
+                // get the childs quadrant
+                int childQuadrant = 0;
+                if (spat instanceof TerrainQuad) {
+                    childQuadrant = ((TerrainQuad) spat).getQuadrant();
+                } else if (spat instanceof TerrainPatch) {
+                    childQuadrant = ((TerrainPatch) spat).getQuadrant();
+                }
+
+                if (childQuadrant == 1 && (quad & 1) != 0) {
+                    match = true;
+                } else if (childQuadrant == 2 && (quad & 2) != 0) {
+                    row = z - split + 1;
+                    match = true;
+                } else if (childQuadrant == 3 && (quad & 4) != 0) {
+                    col = x - split + 1;
+                    match = true;
+                } else if (childQuadrant == 4 && (quad & 8) != 0) {
+                    col = x - split + 1;
+                    row = z - split + 1;
+                    match = true;
+                }
+                if (match)
+                    return new QuadrantChild(col, row, spat);
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * Get the interpolated height of the terrain at the specified point.
+     * @param xz the location to get the height for
+     * @return Float.NAN if the value does not exist, or the coordinates are outside of the terrain
+     */
     public float getHeight(Vector2f xz) {
         // offset
-        float x = (float)(((xz.x - getWorldTranslation().x) / getWorldScale().x) + (float)totalSize / 2f);
-        float z = (float)(((xz.y - getWorldTranslation().z) / getWorldScale().z) + (float)totalSize / 2f);
-        float height = getHeight(x, z);
+        float x = (float)(((xz.x - getWorldTranslation().x) / getWorldScale().x) + (float)(totalSize-1) / 2f);
+        float z = (float)(((xz.y - getWorldTranslation().z) / getWorldScale().z) + (float)(totalSize-1) / 2f);
+        float height = getHeight((int)x, (int)z, (x%1f), (z%1f));
         height *= getWorldScale().y;
         return height;
     }
 
     /*
      * gets an interpolated value at the specified point
-     * @param x coordinate translated into actual (positive) terrain grid coordinates
-     * @param y coordinate translated into actual (positive) terrain grid coordinates
      */
-    protected float getHeight(float x, float z) {
-        x-=0.5f;
-        z-=0.5f;
-        float col = FastMath.floor(x);
-        float row = FastMath.floor(z);
-        boolean onX = false;
-        if(1 - (x - col)-(z - row) < 0) // what triangle to interpolate on
-            onX = true;
-        // v1--v2  ^
-        // |  / |  |
-        // | /  |  |
-        // v3--v4  | Z
-        //         |
-        // <-------Y
-        //     X 
-        float v1 = getHeightmapHeight((int) FastMath.ceil(x), (int) FastMath.ceil(z));
-        float v2 = getHeightmapHeight((int) FastMath.floor(x), (int) FastMath.ceil(z));
-        float v3 = getHeightmapHeight((int) FastMath.ceil(x), (int) FastMath.floor(z));
-        float v4 = getHeightmapHeight((int) FastMath.floor(x), (int) FastMath.floor(z));
-        if (onX) {
-            return ((x - col) + (z - row) - 1f)*v1 + (1f - (x - col))*v2 + (1f - (z - row))*v3;
-        } else {
-            return (1f - (x - col) - (z - row))*v4 + (z - row)*v2 + (x - col)*v3;
+    protected float getHeight(int x, int z, float xm, float zm) {
+        
+        QuadrantChild match = findMatchingChild(x,z);
+        if (match != null) {
+            if (match.child instanceof TerrainQuad) {
+                return ((TerrainQuad) match.child).getHeight(match.col, match.row, xm, zm);
+            } else if (match.child instanceof TerrainPatch) {
+                return ((TerrainPatch) match.child).getHeight(match.col, match.row, xm, zm);
+            }
         }
+        return Float.NaN;
     }
 
     public Vector3f getNormal(Vector2f xz) {
@@ -1675,8 +1545,9 @@ public class TerrainQuad extends Node implements Terrain {
                             }
                         }
                     }
-                    else
+                    else if (children.get(i) instanceof TerrainQuad) {
                         ((TerrainQuad) children.get(i)).findPick(toTest, results);
+                    }
                 }
             }
         }

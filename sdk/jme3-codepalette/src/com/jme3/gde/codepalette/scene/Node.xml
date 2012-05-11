@@ -10,8 +10,8 @@
     <icon32 urlvalue="com/jme3/gde/core/sceneviewer/jme-logo.png" />
 
     <inline-description>
-       <display-name>Node</display-name>
-       <tooltip>new node</tooltip>
+       <display-name>New Node</display-name>
+       <tooltip>Create a new node.</tooltip>
     </inline-description>
 
 </editor_palette_item>

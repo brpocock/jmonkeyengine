@@ -43,7 +43,6 @@ import com.jme3.math.Vector3f;
 import com.jme3.scene.Spatial;
 import com.jme3.scene.control.UpdateControl;
 import com.jme3.terrain.Terrain;
-import com.jme3.terrain.geomipmap.lodcalc.LodCalculator;
 import com.jme3.terrain.heightmap.HeightMap;
 import com.jme3.terrain.heightmap.HeightMapGrid;
 import java.io.IOException;
@@ -51,29 +50,33 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * TerrainGrid itself is an actual TerrainQuad. Its four children are the visible four tiles.
- * 
+ * <p>
+ * TerrainGrid itself is an actual TerrainQuad. Its four children are the visible four tiles.</p>
+ * </p><p>
  * The grid is indexed by cells. Each cell has an integer XZ coordinate originating at 0,0.
  * TerrainGrid will piggyback on the TerrainLodControl so it can use the camera for its
  * updates as well. It does this in the overwritten update() method.
- * 
+ * </p><p>
  * It uses an LRU (Least Recently Used) cache of 16 terrain tiles (full TerrainQuadTrees). The
  * center 4 are the ones that are visible. As the camera moves, it checks what camera cell it is in
  * and will attach the now visible tiles.
- * 
- * The 'quadIndex' variable is a 4x4 array that represents the tiles. The center 
+ * </p><p>
+ * The 'quadIndex' variable is a 4x4 array that represents the tiles. The center
  * four (index numbers: 5, 6, 9, 10) are what is visible. Each quadIndex value is an
  * offset vector. The vector contains whole numbers and represents how many tiles in offset
  * this location is from the center of the map. So for example the index 11 [Vector3f(2, 0, 1)]
  * is located 2*terrainSize in X axis and 1*terrainSize in Z axis.
- * 
+ * </p><p>
  * As the camera moves, it tests what cameraCell it is in. Each camera cell covers four quad tiles
  * and is half way inside each one.
- * 
+ * </p><pre>
  * +-------+-------+
  * | 1     |     4 |    Four terrainQuads that make up the grid
  * |    *..|..*    |    with the cameraCell in the middle, covering
@@ -81,26 +84,27 @@ import java.util.logging.Logger;
  * |    *..|..*    |
  * | 2     |     3 |
  * +-------+-------+
- * 
+ * </pre><p>
  * This results in the effect of when the camera gets half way across one of the sides of a quad to
  * an empty (non-loaded) area, it will trigger the system to load in the next tiles.
- * 
+ * </p><p>
  * The tile loading is done on a background thread, and once the tile is loaded, then it is
  * attached to the qrid quad tree, back on the OGL thread. It will grab the terrain quad from
  * the LRU cache if it exists. If it does not exist, it will load in the new TerrainQuad tile.
- * 
+ * </p><p>
  * The loading of new tiles triggers events for any TerrainGridListeners. The events are:
- *  -tile Attached
- *  -tile Detached
- *  -grid moved.
- * 
+ * <ul>
+ *  <li>tile Attached
+ *  <li>tile Detached
+ *  <li>grid moved.
+ * </ul>
+ * <p>
  * These allow physics to update, and other operation (often needed for loading the terrain) to occur
  * at the right time.
- * 
+ * </p>
  * @author Anthyon
  */
 public class TerrainGrid extends TerrainQuad {
-
     protected static final Logger log = Logger.getLogger(TerrainGrid.class.getCanonicalName());
     protected Vector3f currentCamCell = Vector3f.ZERO;
     protected int quarterSize; // half of quadSize
@@ -111,9 +115,10 @@ public class TerrainGrid extends TerrainQuad {
     protected Set<TerrainGridListener> listeners = new HashSet<TerrainGridListener>();
     protected Material material;
     protected LRUCache<Vector3f, TerrainQuad> cache = new LRUCache<Vector3f, TerrainQuad>(16);
-    private int cellsLoaded = 0;
-    private int[] gridOffset;
-    private boolean runOnce = false;
+    protected int cellsLoaded = 0;
+    protected int[] gridOffset;
+    protected boolean runOnce = false;
+    protected ExecutorService cacheExecutor;
 
     protected class UpdateQuadCache implements Runnable {
 
@@ -266,44 +271,6 @@ public class TerrainGrid extends TerrainQuad {
 
     }
 
-    /**
-     * @deprecated not needed to be called any more, handled automatically
-     */
-    public void initialize(Vector3f location) {
-        if (this.material == null) {
-            throw new RuntimeException("Material must be set prior to call of initialize");
-        }
-        Vector3f camCell = this.getCamCell(location);
-        this.updateChildren(camCell);
-        for (TerrainGridListener l : this.listeners) {
-            l.gridMoved(camCell);
-        }
-    }
-
-    @Override
-    public void update(List<Vector3f> locations, LodCalculator lodCalculator) {
-        // for now, only the first camera is handled.
-        // to accept more, there are two ways:
-        // 1: every camera has an associated grid, then the location is not enough to identify which camera location has changed
-        // 2: grids are associated with locations, and no incremental update is done, we load new grids for new locations, and unload those that are not needed anymore
-        Vector3f cam = locations.isEmpty() ? Vector3f.ZERO.clone() : locations.get(0);
-        Vector3f camCell = this.getCamCell(cam); // get the grid index value of where the camera is (ie. 2,1)
-        if (cellsLoaded > 1) {                  // Check if cells are updated before updating gridoffset.
-            gridOffset[0] = Math.round(camCell.x * (size / 2));
-            gridOffset[1] = Math.round(camCell.z * (size / 2));
-            cellsLoaded = 0;
-        }
-        if (camCell.x != this.currentCamCell.x || camCell.z != currentCamCell.z || !runOnce) {
-            // if the camera has moved into a new cell, load new terrain into the visible 4 center quads
-            this.updateChildren(camCell);
-            for (TerrainGridListener l : this.listeners) {
-                l.gridMoved(camCell);
-            }
-        }
-        runOnce = true;
-        super.update(locations, lodCalculator);
-    }
-
     public Vector3f getCamCell(Vector3f location) {
         Vector3f tile = getTileCell(location);
         Vector3f offsetHalf = new Vector3f(-0.5f, 0, -0.5f);
@@ -361,13 +328,6 @@ public class TerrainGrid extends TerrainQuad {
         }
     }
 
-    @Deprecated
-    /**
-     * @Deprecated, use updateChildren
-     */
-    protected void updateChildrens(Vector3f camCell) {
-        updateChildren(camCell);
-    }
     
     /**
      * Called when the camera has moved into a new cell. We need to
@@ -417,12 +377,12 @@ public class TerrainGrid extends TerrainQuad {
         // ---------------------------------------------------
         // ---------------------------------------------------
 
-        if (executor == null) {
+        if (cacheExecutor == null) {
             // use the same executor as the LODControl
-            executor = createExecutorService();
+            cacheExecutor = createExecutorService();
         }
 
-        executor.submit(new UpdateQuadCache(camCell));
+        cacheExecutor.submit(new UpdateQuadCache(camCell));
 
         this.currentCamCell = camCell;
     }
@@ -480,6 +440,17 @@ public class TerrainGrid extends TerrainQuad {
         return terrain.getMaterial(worldLocation);
     }
 
+    protected ExecutorService createExecutorService() {
+        return Executors.newSingleThreadExecutor(new ThreadFactory() {
+            public Thread newThread(Runnable r) {
+                Thread th = new Thread(r);
+                th.setName("jME Terrain Thread");
+                th.setDaemon(true);
+                return th;
+            }
+        });
+    }
+    
     @Override
     public void read(JmeImporter im) throws IOException {
         super.read(im);

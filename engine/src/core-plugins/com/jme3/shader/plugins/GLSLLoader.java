@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2010 jMonkeyEngine
+ * Copyright (c) 2009-2012 jMonkeyEngine
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,6 +36,7 @@ import com.jme3.asset.AssetInfo;
 import com.jme3.asset.AssetKey;
 import com.jme3.asset.AssetLoader;
 import com.jme3.asset.AssetManager;
+import com.jme3.asset.cache.AssetCache;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -78,12 +79,15 @@ public class GLSLLoader implements AssetLoader {
     }
 
     private class GlslDependKey extends AssetKey<InputStream> {
-        public GlslDependKey(String name){
+
+        public GlslDependKey(String name) {
             super(name);
         }
+
         @Override
-        public boolean shouldCache(){
-            return false;
+        public Class<? extends AssetCache> getCacheType() {
+            // Disallow caching here
+            return null;
         }
     }
 
@@ -185,11 +189,8 @@ public class GLSLLoader implements AssetLoader {
 
     /**
      *
-     * @param owner
-     * @param in
-     * @param extension
-     * @param key
-     * @return
+     * @param info
+     * @return String of GLSL code
      * @throws java.io.IOException
      */
     public Object load(AssetInfo info) throws IOException {

@@ -38,54 +38,57 @@ import android.content.res.AssetManager;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.media.SoundPool;
+
+import com.jme3.asset.AssetKey;
 import com.jme3.audio.AudioNode.Status;
 import com.jme3.audio.*;
 import com.jme3.math.FastMath;
 import com.jme3.math.Vector3f;
 import java.io.IOException;
 import java.util.HashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
  * This class is the android implementation for {@link AudioRenderer}
+ * 
  * @author larynx
- *
+ * @author plan_rich
  */
-public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadCompleteListener, MediaPlayer.OnCompletionListener {
+public class AndroidAudioRenderer implements AudioRenderer,
+        SoundPool.OnLoadCompleteListener, MediaPlayer.OnCompletionListener {
 
     private static final Logger logger = Logger.getLogger(AndroidAudioRenderer.class.getName());
     private final static int MAX_NUM_CHANNELS = 16;
+    private final HashMap<AudioNode, MediaPlayer> musicPlaying = new HashMap<AudioNode, MediaPlayer>();
     private SoundPool soundPool = null;
-    private HashMap<AudioNode, MediaPlayer> musicPlaying = new HashMap<AudioNode, MediaPlayer>();
     private final Vector3f listenerPosition = new Vector3f();
     // For temp use
     private final Vector3f distanceVector = new Vector3f();
-    private final AudioManager manager;
     private final Context context;
-    private final AssetManager am;
-    private HashMap<Integer, AudioNode> mapLoadingAudioNodes = new HashMap<Integer, AudioNode>();
-    private final AtomicBoolean lastLoadCompleted = new AtomicBoolean();
+    private final AssetManager assetManager;
+    private HashMap<Integer, AudioNode> soundpoolStillLoading = new HashMap<Integer, AudioNode>();
     private Listener listener;
     private boolean audioDisabled = false;
+    private final AudioManager manager;
 
     public AndroidAudioRenderer(Activity context) {
         this.context = context;
         manager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         context.setVolumeControlStream(AudioManager.STREAM_MUSIC);
-        am = context.getAssets();
+        assetManager = context.getAssets();
     }
 
     @Override
     public void initialize() {
-        soundPool = new SoundPool(MAX_NUM_CHANNELS, AudioManager.STREAM_MUSIC, 0);
+        soundPool = new SoundPool(MAX_NUM_CHANNELS, AudioManager.STREAM_MUSIC,
+                0);
         soundPool.setOnLoadCompleteListener(this);
     }
 
     @Override
     public void updateSourceParam(AudioNode src, AudioParam param) {
-        //logger.log(Level.INFO, "updateSourceParam " + param);
+        // logger.log(Level.INFO, "updateSourceParam " + param);
 
         if (audioDisabled) {
             return;
@@ -94,9 +97,6 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
         if (src.getChannel() < 0) {
             return;
         }
-
-        assert src.getChannel() >= 0;
-
 
         switch (param) {
             case Position:
@@ -168,7 +168,7 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
                 if (src.getDryFilter() != null) {
                     Filter f = src.getDryFilter();
                     if (f.isUpdateNeeded()) {
-                        //updateFilter(f);
+                        // updateFilter(f);
                     }
                 }
                 break;
@@ -177,8 +177,13 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
                 }
                 break;
             case Volume:
-
-                soundPool.setVolume(src.getChannel(), src.getVolume(), src.getVolume());
+                MediaPlayer mp = musicPlaying.get(src);
+                if (mp != null) {
+                    mp.setVolume(src.getVolume(), src.getVolume());
+                } else {
+                    soundPool.setVolume(src.getChannel(), src.getVolume(),
+                            src.getVolume());
+                }
 
                 break;
             case Pitch:
@@ -190,7 +195,7 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
 
     @Override
     public void updateListenerParam(Listener listener, ListenerParam param) {
-        //logger.log(Level.INFO, "updateListenerParam " + param);
+        // logger.log(Level.INFO, "updateListenerParam " + param);
         if (audioDisabled) {
             return;
         }
@@ -210,7 +215,7 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
 
                 break;
             case Volume:
-                //alListenerf(AL_GAIN, listener.getVolume());
+                // alListenerf(AL_GAIN, listener.getVolume());
                 break;
         }
 
@@ -225,31 +230,30 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
         for (AudioNode src : musicPlaying.keySet()) {
 
             MediaPlayer mp = musicPlaying.get(src);
-            {
-                // Calc the distance to the listener
-                distanceVector.set(listenerPosition);
-                distanceVector.subtractLocal(src.getLocalTranslation());
-                distance = FastMath.abs(distanceVector.length());
 
-                if (distance < src.getRefDistance()) {
-                    distance = src.getRefDistance();
-                }
-                if (distance > src.getMaxDistance()) {
-                    distance = src.getMaxDistance();
-                }
-                volume = src.getRefDistance() / distance;
+            // Calc the distance to the listener
+            distanceVector.set(listenerPosition);
+            distanceVector.subtractLocal(src.getLocalTranslation());
+            distance = FastMath.abs(distanceVector.length());
 
-                AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
-
-                if (FastMath.abs(audioData.getCurrentVolume() - volume) > FastMath.FLT_EPSILON) {
-                    // Left / Right channel get the same volume by now, only positional
-                    mp.setVolume(volume, volume);
-
-                    audioData.setCurrentVolume(volume);
-                }
-
-
+            if (distance < src.getRefDistance()) {
+                distance = src.getRefDistance();
             }
+            if (distance > src.getMaxDistance()) {
+                distance = src.getMaxDistance();
+            }
+            volume = src.getRefDistance() / distance;
+
+            AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
+
+            if (FastMath.abs(audioData.getCurrentVolume() - volume) > FastMath.FLT_EPSILON) {
+                // Left / Right channel get the same volume by now, only
+                // positional
+                mp.setVolume(volume, volume);
+
+                audioData.setCurrentVolume(volume);
+            }
+
         }
     }
 
@@ -270,45 +274,9 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
     }
 
     @Override
-    public void onLoadComplete(SoundPool soundPool, int sampleId, int status) {
-        AudioNode src = mapLoadingAudioNodes.get(sampleId);
-        if (src.getAudioData() instanceof AndroidAudioData) {
-            AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
-
-            if (status == 0) // load was successfull
-            {
-                int channelIndex;
-                channelIndex = soundPool.play(audioData.getId(), 1f, 1f, 1, -1, 1f);
-                src.setChannel(channelIndex);
-                // Playing started ?
-                if (src.getChannel() > 0) {
-                    src.setStatus(Status.Playing);
-                }
-            } else {
-                src.setChannel(-1);
-            }
-        } else {
-            throw new IllegalArgumentException("AudioData is not of type AndroidAudioData for AudioNode " + src.toString());
-        }
-    }
-
-    @Override
     public void cleanup() {
         // Cleanup sound pool
         if (soundPool != null) {
-            for (AudioNode src : mapLoadingAudioNodes.values()) {
-                if ((src.getStatus() == Status.Playing) && (src.getChannel() > 0)) {
-                    soundPool.stop(src.getChannel());
-                }
-
-                if (src.getAudioData() instanceof AndroidAudioData) {
-                    AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
-                    if (audioData.getId() > 0) {
-                        soundPool.unload(audioData.getId());
-                    }
-                }
-            }
-
             soundPool.release();
             soundPool = null;
         }
@@ -327,112 +295,92 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
 
     @Override
     public void onCompletion(MediaPlayer mp) {
-        for (AudioNode src : musicPlaying.keySet()) {
-            if (musicPlaying.get(src) == mp) {
-                mp.seekTo(0);
-                mp.stop();
-                src.setStatus(Status.Stopped);
-                break;
-            }
+        if (mp.isPlaying()) {
+            mp.seekTo(0);
+            mp.stop();
         }
-
+            // XXX: This has bad performance -> maybe change overall structure of
+            // mediaplayer in this audiorenderer?
+            for (AudioNode src : musicPlaying.keySet()) {
+                if (musicPlaying.get(src) == mp) {
+                    src.setStatus(Status.Stopped);
+                    break;
+                }
+            }
+        
     }
 
+    /**
+     * Plays using the {@link SoundPool} of Android. Due to hard limitation of
+     * the SoundPool: After playing more instances of the sound you only have
+     * the channel of the last played instance.
+     * 
+     * It is not possible to get information about the state of the soundpool of
+     * a specific streamid, so removing is not possilbe -> noone knows when
+     * sound finished.
+     */
     public void playSourceInstance(AudioNode src) {
         if (audioDisabled) {
             return;
         }
 
-        AndroidAudioData audioData;
-        int soundId = 0;
+        AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
 
-        if (src.getAudioData() instanceof AndroidAudioData) {
-            audioData = (AndroidAudioData) src.getAudioData();
-
-            if (audioData.getAssetKey() instanceof AudioKey) {
-                AudioKey assetKey = (AudioKey) audioData.getAssetKey();
-
-                // streaming audionodes get played using android mediaplayer, non streaming uses SoundPool
-                if (assetKey.isStream()) {
-                    MediaPlayer mp;
-                    if (musicPlaying.containsKey(src)) {
-                        mp = musicPlaying.get(src);
-                    } else {
-                        mp = new MediaPlayer();
-                        mp.setOnCompletionListener(this);
-                        //mp = MediaPlayer.create(context, new Ur );
-                        musicPlaying.put(src, mp);
-                    }
-                    if (!mp.isPlaying()) {
-                        try {
-                            AssetFileDescriptor afd = am.openFd(assetKey.getName());
-                            mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
-
-                            mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                            mp.prepare();
-                            mp.setLooping(src.isLooping());
-                            mp.start();
-                            src.setChannel(1);
-                            src.setStatus(Status.Playing);
-                        } catch (IllegalArgumentException e) {
-                            logger.log(Level.SEVERE, "Failed to play " + assetKey.getName(), e);
-                        } catch (IllegalStateException e) {
-                            // TODO Auto-generated catch block
-                            logger.log(Level.SEVERE, "Failed to play " + assetKey.getName(), e);
-                        } catch (IOException e) {
-                            // TODO Auto-generated catch block
-                            logger.log(Level.SEVERE, "Failed to play " + assetKey.getName(), e);
-                        }
-
-                    }
-
-                } else {
-                    // Low latency Sound effect using SoundPool
-                    if (audioData.isUpdateNeeded() || (audioData.getId() <= 0)) {
-                        if (audioData.getId() > 0) {
-                            if (src.getChannel() > 0) {
-                                soundPool.stop(src.getChannel());
-                                src.setChannel(-1);
-                            }
-                            soundPool.unload(audioData.getId());
-                        }
-
-                        try {
-                            soundId = soundPool.load(am.openFd(assetKey.getName()), 1);
-                        } catch (IOException e) {
-                            logger.log(Level.SEVERE, "Failed to load sound " + assetKey.getName(), e);
-                            soundId = -1;
-                        }
-                        audioData.setId(soundId);
-                    }
-
-                    // Sound failed to load ?
-                    if (audioData.getId() <= 0) {
-                        throw new IllegalArgumentException("Failed to load: " + assetKey.getName());
-                    } else {
-                        int channelIndex;
-                        channelIndex = soundPool.play(audioData.getId(), 1f, 1f, 1, -1, 1f);
-                        if (channelIndex == 0) {
-                            // Loading is not finished
-                            // Store the soundId and the AudioNode for async loading and later play start
-                            mapLoadingAudioNodes.put(audioData.getId(), src);
-                        }
-                        src.setChannel(channelIndex);
-                    }
-
-                    // Playing started ?
-                    if (src.getChannel() > 0) {
-                        src.setStatus(Status.Playing);
-                    }
-                }
-
-            }
-        } else {
-            throw new IllegalArgumentException("AudioData is not of type AndroidAudioData for AudioNode " + src.toString());
+        if (!(audioData.getAssetKey() instanceof AudioKey)) {
+            throw new IllegalArgumentException("Asset is not a AudioKey");
         }
 
+        AudioKey assetKey = (AudioKey) audioData.getAssetKey();
+
+        try {
+
+            if (audioData.getId() < 0) { // found something to load                                
+                int soundId = soundPool.load(
+                        assetManager.openFd(assetKey.getName()), 1);
+                audioData.setId(soundId);
+            }
+
+            int channel = soundPool.play(audioData.getId(), 1f, 1f, 1, 0, 1f);
+
+            if (channel == 0) {
+                soundpoolStillLoading.put(audioData.getId(), src);
+            } else {
+                if (src.getStatus() != Status.Stopped) {
+                    soundPool.stop(channel);
+                    src.setStatus(Status.Stopped);
+                }
+                src.setChannel(channel); // receive a channel at the last
+                setSourceParams(src);
+                // playing at least
 
 
+            }
+        } catch (IOException e) {
+            logger.log(Level.SEVERE,
+                    "Failed to load sound " + assetKey.getName(), e);
+            audioData.setId(-1);
+        }
+    }
+
+    @Override
+    public void onLoadComplete(SoundPool soundPool, int sampleId, int status) {
+        AudioNode src = soundpoolStillLoading.remove(sampleId);
+
+        if (src == null) {
+            logger.warning("Something went terribly wrong! onLoadComplete"
+                    + " had sampleId which was not in the HashMap of loading items");
+            return;
+        }
+
+        AudioData audioData = src.getAudioData();
+
+        // load was successfull
+        if (status == 0) {
+            int channelIndex;
+            channelIndex = soundPool.play(audioData.getId(), 1f, 1f, 1, 0, 1f);
+            src.setChannel(channelIndex);
+            setSourceParams(src);
+        }
     }
 
     public void playSource(AudioNode src) {
@@ -440,15 +388,73 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
             return;
         }
 
-        //assert src.getStatus() == Status.Stopped || src.getChannel() == -1;
+        AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
 
-        if (src.getStatus() == Status.Playing) {
-            return;
-        } else if (src.getStatus() == Status.Stopped) {
-            playSourceInstance(src);
+        MediaPlayer mp = musicPlaying.get(src);
+        if (mp == null) {
+            mp = new MediaPlayer();
+            mp.setOnCompletionListener(this);
+            mp.setAudioStreamType(AudioManager.STREAM_MUSIC);
         }
 
+        try {
+            if (src.getStatus() == Status.Stopped) {
+                mp.reset();
+                AssetKey<?> key = audioData.getAssetKey();
 
+                AssetFileDescriptor afd = assetManager.openFd(key.getName()); // assetKey.getName()
+                mp.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(),
+                        afd.getLength());
+                mp.prepare();
+                setSourceParams(src, mp);
+                src.setChannel(0);
+                src.setStatus(Status.Playing);
+                musicPlaying.put(src, mp);
+                mp.start();
+            } else {
+                mp.start();
+            }
+        } catch (IllegalStateException e) {
+            e.printStackTrace();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void setSourceParams(AudioNode src, MediaPlayer mp) {
+        mp.setLooping(src.isLooping());
+        mp.setVolume(src.getVolume(), src.getVolume());
+        //src.getDryFilter();
+    }
+
+    private void setSourceParams(AudioNode src) {
+        soundPool.setLoop(src.getChannel(), src.isLooping() ? -1 : 0);
+        soundPool.setVolume(src.getChannel(), src.getVolume(), src.getVolume());
+    }
+
+    /**
+     * Pause the current playing sounds. Both from the {@link SoundPool} and the
+     * active {@link MediaPlayer}s
+     */
+    public void pauseAll() {
+        if (soundPool != null) {
+            soundPool.autoPause();
+            for (MediaPlayer mp : musicPlaying.values()) {
+                mp.pause();
+            }
+        }
+    }
+
+    /**
+     * Resume all paused sounds.
+     */
+    public void resumeAll() {
+        if (soundPool != null) {
+            soundPool.autoResume();
+            for (MediaPlayer mp : musicPlaying.values()) {
+                mp.start(); //no resume -> api says call start to resume
+            }
+        }
     }
 
     public void pauseSource(AudioNode src) {
@@ -456,32 +462,16 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
             return;
         }
 
-        if (src.getStatus() == Status.Playing) {
-            if (src.getAudioData() instanceof AndroidAudioData) {
-                AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
-                if (audioData.getAssetKey() instanceof AudioKey) {
-                    AudioKey assetKey = (AudioKey) audioData.getAssetKey();
-
-                    if (assetKey.isStream()) {
-                        MediaPlayer mp;
-                        if (musicPlaying.containsKey(src)) {
-                            mp = musicPlaying.get(src);
-                            mp.pause();
-                            src.setStatus(Status.Paused);
-                        }
-                    } else {
-                        assert src.getChannel() != -1;
-
-                        if (src.getChannel() > 0) {
-                            soundPool.pause(src.getChannel());
-                            src.setStatus(Status.Paused);
-                        }
-                    }
-                }
-            }
-
+        MediaPlayer mp = musicPlaying.get(src);
+        if (mp != null) {
+            mp.pause();
+            src.setStatus(Status.Paused);
+        } else {
+            int channel = src.getChannel();
+            if (channel != -1) {
+                soundPool.pause(channel); // is not very likley to make
+            }											// something useful :)
         }
-
     }
 
     public void stopSource(AudioNode src) {
@@ -489,86 +479,50 @@ public class AndroidAudioRenderer implements AudioRenderer, SoundPool.OnLoadComp
             return;
         }
 
-
-        if (src.getStatus() != Status.Stopped) {
-            if (src.getAudioData() instanceof AndroidAudioData) {
-                AndroidAudioData audioData = (AndroidAudioData) src.getAudioData();
-                if (audioData.getAssetKey() instanceof AudioKey) {
-                    AudioKey assetKey = (AudioKey) audioData.getAssetKey();
-                    if (assetKey.isStream()) {
-                        MediaPlayer mp;
-                        if (musicPlaying.containsKey(src)) {
-                            mp = musicPlaying.get(src);
-                            mp.stop();
-                            src.setStatus(Status.Stopped);
-                            src.setChannel(-1);
-                        }
-                    } else {
-                        int chan = src.getChannel();
-                        assert chan != -1; // if it's not stopped, must have id
-
-                        if (src.getChannel() > 0) {
-                            soundPool.stop(src.getChannel());
-                            src.setChannel(-1);
-                        }
-
-                        src.setStatus(Status.Stopped);
-
-                        if (audioData.getId() > 0) {
-                            soundPool.unload(audioData.getId());
-                        }
-                        audioData.setId(-1);
-
-
-
-                    }
-                }
+        // can be stream or buffer -> so try to get mediaplayer
+        // if there is non try to stop soundpool
+        MediaPlayer mp = musicPlaying.get(src);
+        if (mp != null) {
+            mp.stop();
+            mp.reset();
+            src.setStatus(Status.Stopped);
+        } else {
+            int channel = src.getChannel();
+            if (channel != -1) {
+                soundPool.pause(channel); // is not very likley to make
+                // something useful :)
             }
-
         }
 
     }
 
-    public void updateAudioData(AndroidAudioData data) {
-        throw new UnsupportedOperationException("updateAudioData");
-    }
-
-    public void deleteFilter(Filter filter) {
-    }
-    
     @Override
     public void deleteAudioData(AudioData ad) {
-        if (ad instanceof AndroidAudioData) {
-            AndroidAudioData audioData = (AndroidAudioData) ad;
-            if (audioData.getAssetKey() instanceof AudioKey) {
-                AudioKey assetKey = (AudioKey) audioData.getAssetKey();
-                if (assetKey.isStream()) {
-                    for (AudioNode src : musicPlaying.keySet()) {
-                        if (src.getAudioData() == ad) {
-                            MediaPlayer mp = musicPlaying.get(src);
-                            mp.stop();
-                            mp.release();
-                            musicPlaying.remove(src);
-                            src.setStatus(Status.Stopped);
-                            src.setChannel(-1);
-                            break;
-                        }
-                    }
-                } else {
-                    if (audioData.getId() > 0) {
-                        soundPool.unload(audioData.getId());
-                    }
-                    audioData.setId(0);
-                }
 
+        for (AudioNode src : musicPlaying.keySet()) {
+            if (src.getAudioData() == ad) {
+                MediaPlayer mp = musicPlaying.remove(src);
+                mp.stop();
+                mp.release();
+                src.setStatus(Status.Stopped);
+                src.setChannel(-1);
+                ad.setId(-1);
+                break;
             }
-        } else {
-            throw new IllegalArgumentException("AudioData is not of type AndroidAudioData in deleteAudioData");
+        }
+
+        if (ad.getId() > 0) {
+            soundPool.unload(ad.getId());
+            ad.setId(-1);
         }
     }
 
     @Override
     public void setEnvironment(Environment env) {
-        // TODO Auto-generated method stub
+        // not yet supported
+    }
+
+    @Override
+    public void deleteFilter(Filter filter) {
     }
 }
