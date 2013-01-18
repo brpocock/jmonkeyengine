@@ -1,7 +1,6 @@
-jmonkeyengine
+jMonkeyEngine GitHub Mirror
 =============
 *Please note:*
-Please note:
 
  * This mirror is not official yet, and we might still make changes. Don’t make yourself reliant on it.
  * Don’t make any pull requests to this repository, they will be ignored.
