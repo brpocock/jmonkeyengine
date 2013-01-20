@@ -73,16 +73,17 @@ import org.openide.util.lookup.Lookups;
  */
 @SuppressWarnings("unchecked")
 public class ProjectAssetManager extends DesktopAssetManager {
+
     private static final Logger logger = Logger.getLogger(ProjectAssetManager.class.getName());
-    private Project project;
-    private List<String> folderNames = new LinkedList<String>();
-    private final List<AssetEventListener> assetEventListeners = Collections.synchronizedList(new LinkedList<AssetEventListener>());
+    private final Mutex mutex = new Mutex();
+    private final Project project;
     private final List<ClassPathChangeListener> classPathListeners = Collections.synchronizedList(new LinkedList<ClassPathChangeListener>());
-    private URLClassLoader loader;
     private final List<ClassPath> classPaths = Collections.synchronizedList(new LinkedList<ClassPath>());
     private final List<ClassPathItem> classPathItems = Collections.synchronizedList(new LinkedList<ClassPathItem>());
-    private LinkedList<FileObject> jarItems = new LinkedList<FileObject>();
-    private final Mutex mutex = new Mutex();
+    private final List<AssetEventListener> assetEventListeners = Collections.synchronizedList(new LinkedList<AssetEventListener>());
+    private final List<String> folderNames = new LinkedList<String>();
+    private final List<FileObject> jarItems = new LinkedList<FileObject>();
+    private URLClassLoader loader;
 
     public ProjectAssetManager(Project prj, String folderName) {
         super(true);
@@ -119,7 +120,7 @@ public class ProjectAssetManager extends DesktopAssetManager {
         if (jarItems.isEmpty() && classPathItems.isEmpty()) {
             return;
         }
-        Logger.getLogger(ProjectAssetManager.class.getName()).log(Level.INFO, "Clear {0} classpath entries and {1} url locators for project {2}", new Object[]{classPathItems.size(), jarItems.size(), project.toString()});
+        logger.log(Level.INFO, "Clear {0} classpath entries and {1} url locators for project {2}", new Object[]{classPathItems.size(), jarItems.size(), project.toString()});
         for (FileObject fileObject : jarItems) {
             logger.log(Level.FINE, "Remove locator:{0}", fileObject.toURL());
             unregisterLocator(fileObject.toURL().toExternalForm(),
@@ -137,7 +138,7 @@ public class ProjectAssetManager extends DesktopAssetManager {
         classPaths.clear();
     }
 
-    private synchronized void loadClassLoader() {
+    private void loadClassLoader() {
         Sources sources = ProjectUtils.getSources(project);
         if (sources != null) {
             if (loader != null) {
@@ -169,7 +170,7 @@ public class ProjectAssetManager extends DesktopAssetManager {
             }
             loader = new URLClassLoader(urls.toArray(new URL[urls.size()]), getClass().getClassLoader());
             addClassLoader(loader);
-            Logger.getLogger(ProjectAssetManager.class.getName()).log(Level.INFO, "Updated {0} classpath entries and {1} url locators for project {2}", new Object[]{classPathItems.size(), jarItems.size(), project.toString()});
+            logger.log(Level.INFO, "Updated {0} classpath entries and {1} url locators for project {2}", new Object[]{classPathItems.size(), jarItems.size(), project.toString()});
         }
     }
     FileChangeListener listener = new FileChangeListener() {
@@ -196,15 +197,13 @@ public class ProjectAssetManager extends DesktopAssetManager {
         }
 
         private void fireChange(FileEvent fe) {
-            Logger.getLogger(ProjectAssetManager.class.getName()).log(Level.FINE, "Classpath item changed: {0}", fe);
-//            if (!fe.isExpected()) {
+            logger.log(Level.FINE, "Classpath item changed: {0}", fe);
             updateClassLoader();
-//            }
         }
     };
     private PropertyChangeListener classPathListener = new PropertyChangeListener() {
         public void propertyChange(PropertyChangeEvent evt) {
-            Logger.getLogger(ProjectAssetManager.class.getName()).log(Level.FINE, "Classpath event: {0}", evt);
+            logger.log(Level.FINE, "Classpath event: {0}", evt);
             if (ClassPath.PROP_ROOTS.equals(evt.getPropertyName())) {
                 updateClassLoader();
             } else if (ClassPath.PROP_ENTRIES.equals(evt.getPropertyName())) {
@@ -215,7 +214,7 @@ public class ProjectAssetManager extends DesktopAssetManager {
         }
     };
 
-    private synchronized void updateClassLoader() {
+    private void updateClassLoader() {
         ProjectManager.mutex().postWriteRequest(new Runnable() {
             public void run() {
                 synchronized (classPathItems) {
@@ -299,7 +298,7 @@ public class ProjectAssetManager extends DesktopAssetManager {
     public String[] getModels() {
         return filesWithSuffix("j3o");
     }
-    
+
     public String[] getMaterials() {
         return filesWithSuffix("j3m");
     }
@@ -327,22 +326,16 @@ public class ProjectAssetManager extends DesktopAssetManager {
     public String[] getMatDefs() {
         return filesWithSuffix("j3md");
     }
-    
-    public String[] getAssetsWithSuffix(String string){
+
+    public String[] getAssetsWithSuffix(String string) {
         return filesWithSuffix(string);
     }
-    
-    private String[] filesWithSuffix(String string){
-        List<String> list=collectFilesWithSuffix(string);
+
+    private String[] filesWithSuffix(String string) {
+        List<String> list = collectFilesWithSuffix(string);
         return list.toArray(new String[list.size()]);
     }
 
-    /**
-     * Collects files over the asset folder(s) and classpath
-     *
-     * @param suffix
-     * @return
-     */
     private List<String> collectFilesWithSuffix(String suffix) {
         List<String> list = new LinkedList<String>();
         FileObject assetsFolder = getAssetFolder();
@@ -356,24 +349,21 @@ public class ProjectAssetManager extends DesktopAssetManager {
             }
         }
 
-        if (classPathItems != null) {
-            synchronized (classPathItems) {
-                // TODO I need to find out if classPathItems contains all jars added to a project
-                Iterator<ClassPathItem> classPathItemsIter = classPathItems.iterator();
-                while (classPathItemsIter.hasNext()) {
-                    ClassPathItem classPathItem = classPathItemsIter.next();
-                    FileObject jarFile = classPathItem.object;
+        synchronized (classPathItems) {
+            // TODO I need to find out if classPathItems contains all jars added to a project
+            Iterator<ClassPathItem> classPathItemsIter = classPathItems.iterator();
+            while (classPathItemsIter.hasNext()) {
+                ClassPathItem classPathItem = classPathItemsIter.next();
+                FileObject jarFile = classPathItem.object;
 
-                    Enumeration<FileObject> jarEntry = (Enumeration<FileObject>) jarFile.getChildren(true);
-                    while (jarEntry.hasMoreElements()) {
-                        FileObject jarEntryAsset = jarEntry.nextElement();
-                        if (jarEntryAsset.getExt().equalsIgnoreCase(suffix)) {
-                            if (!jarEntryAsset.getPath().startsWith("/")) {
-                                list.add(jarEntryAsset.getPath());
-                            }
+                Enumeration<FileObject> jarEntry = (Enumeration<FileObject>) jarFile.getChildren(true);
+                while (jarEntry.hasMoreElements()) {
+                    FileObject jarEntryAsset = jarEntry.nextElement();
+                    if (jarEntryAsset.getExt().equalsIgnoreCase(suffix)) {
+                        if (!jarEntryAsset.getPath().startsWith("/")) {
+                            list.add(jarEntryAsset.getPath());
                         }
                     }
-
                 }
             }
         }
@@ -384,24 +374,22 @@ public class ProjectAssetManager extends DesktopAssetManager {
     public InputStream getResourceAsStream(String name) {
         InputStream in = null;//JmeSystem.getResourceAsStream(name);
         synchronized (classPathItems) {
-            if (in == null && classPathItems != null) {
-                // TODO I need to find out if classPathItems contains all jars added to a project
-                Iterator<ClassPathItem> classPathItemsIter = classPathItems.iterator();
-                while (classPathItemsIter.hasNext()) {
-                    ClassPathItem classPathItem = classPathItemsIter.next();
-                    FileObject jarFile = classPathItem.object;
+            // TODO I need to find out if classPathItems contains all jars added to a project
+            Iterator<ClassPathItem> classPathItemsIter = classPathItems.iterator();
+            while (classPathItemsIter.hasNext()) {
+                ClassPathItem classPathItem = classPathItemsIter.next();
+                FileObject jarFile = classPathItem.object;
 
-                    Enumeration<FileObject> jarEntry = (Enumeration<FileObject>) jarFile.getChildren(true);
-                    while (jarEntry.hasMoreElements()) {
-                        FileObject jarEntryAsset = jarEntry.nextElement();
-                        if (jarEntryAsset.getPath().equalsIgnoreCase(name)) {
-                            try {
-                                in = jarEntryAsset.getInputStream();
-                            } catch (FileNotFoundException ex) {
-                                Exceptions.printStackTrace(ex);
-                            }
-                            break;
+                Enumeration<FileObject> jarEntry = (Enumeration<FileObject>) jarFile.getChildren(true);
+                while (jarEntry.hasMoreElements()) {
+                    FileObject jarEntryAsset = jarEntry.nextElement();
+                    if (jarEntryAsset.getPath().equalsIgnoreCase(name)) {
+                        try {
+                            in = jarEntryAsset.getInputStream();
+                        } catch (FileNotFoundException ex) {
+                            Exceptions.printStackTrace(ex);
                         }
+                        break;
                     }
                 }
             }

@@ -389,7 +389,12 @@ public class SceneApplication extends Application implements LookupProvider {
                 }
                 //TODO: handle this differently (no opened file)
                 if (request.getRootNode() == null && request.getJmeNode() == null) {
-                    request.setJmeNode(NodeUtility.createNode(rootNode, false));
+                    DataObject dobj = request.getDataObject();
+                    if (dobj != null) {
+                        request.setJmeNode(NodeUtility.createNode(rootNode, dobj));
+                    } else {
+                        request.setJmeNode(NodeUtility.createNode(rootNode, false));
+                    }
                 }
                 setHelpContext(request.getHelpCtx());
                 setWindowTitle(request.getWindowTitle());
@@ -454,6 +459,7 @@ public class SceneApplication extends Application implements LookupProvider {
                 if (oldRequest.getRequester() instanceof SceneApplication) {
                     camController.disable();
                 }
+                enableCamLight(false);
                 //TODO: state list is not thread safe..
                 fakeApp.removeCurrentStates();
                 enqueue(new Callable() {

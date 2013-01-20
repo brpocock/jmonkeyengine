@@ -66,6 +66,7 @@ public class SceneExplorerProperty<T> extends PropertySupport.Reflection<T> {
     public static final String PROP_USER_CHANGE = "PROP_USER_CHANGE";
     public static final String PROP_INIT_CHANGE = "PROP_INIT_CHANGE";
     private T objectLocal;
+    private boolean changing = false;
     private final boolean cloneable;
     private final boolean instantiable;
     private final boolean primitive;
@@ -121,34 +122,41 @@ public class SceneExplorerProperty<T> extends PropertySupport.Reflection<T> {
             return;
         }
         final T realValue = getSuperValue();
-        if ((objectLocal == null) && !inited) {
-            mutex.postWriteRequest(new Runnable() {
-                public void run() {
-                    inited = true;
-                    objectLocal = duplicateObject(realValue);
-                    notifyListeners(PROP_INIT_CHANGE, null, objectLocal);
-                    logger.log(Level.FINE, "Got first sync duplicate for {0}", objectLocal);
+        mutex.readAccess(new Runnable() {
+            public void run() {
+                if (changing) {
+                    return;
                 }
-            });
-        } else if ((objectLocal != null) && !objectLocal.equals(realValue)) {
-            mutex.postWriteRequest(new Runnable() {
-                public void run() {
-                    T oldObject = objectLocal;
-                    T newObject = duplicateObject(realValue);
-                    objectLocal = newObject;
-                    notifyListeners(PROP_SCENE_CHANGE, oldObject, objectLocal);
-                    logger.log(Level.FINE, "Got update for {0} due to equals check", objectLocal);
+                if ((objectLocal == null) && !inited) {
+                    mutex.postWriteRequest(new Runnable() {
+                        public void run() {
+                            inited = true;
+                            objectLocal = duplicateObject(realValue);
+                            notifyListeners(PROP_INIT_CHANGE, null, objectLocal);
+                            logger.log(Level.FINE, "Got first sync duplicate for {0}", objectLocal);
+                        }
+                    });
+                } else if ((objectLocal != null) && !objectLocal.equals(realValue)) {
+                    mutex.postWriteRequest(new Runnable() {
+                        public void run() {
+                            T oldObject = objectLocal;
+                            T newObject = duplicateObject(realValue);
+                            objectLocal = newObject;
+                            notifyListeners(PROP_SCENE_CHANGE, oldObject, objectLocal);
+                            logger.log(Level.FINE, "Got update for {0} due to equals check", objectLocal);
+                        }
+                    });
+                } else if ((objectLocal == null) && (realValue != null)) {
+                    mutex.postWriteRequest(new Runnable() {
+                        public void run() {
+                            objectLocal = duplicateObject(realValue);
+                            notifyListeners(PROP_SCENE_CHANGE, null, objectLocal);
+                            logger.log(Level.FINE, "Got update for {0} due to change from null", objectLocal);
+                        }
+                    });
                 }
-            });
-        } else if ((objectLocal == null) && (realValue != null)) {
-            mutex.postWriteRequest(new Runnable() {
-                public void run() {
-                    objectLocal = duplicateObject(realValue);
-                    notifyListeners(PROP_SCENE_CHANGE, null, objectLocal);
-                    logger.log(Level.FINE, "Got update for {0} due to change from null", objectLocal);
-                }
-            });
-        }
+            }
+        });
     }
 
     @Override
@@ -165,14 +173,20 @@ public class SceneExplorerProperty<T> extends PropertySupport.Reflection<T> {
     public void setValue(final T val) throws IllegalAccessException, IllegalArgumentException, InvocationTargetException {
         mutex.postWriteRequest(new Runnable() {
             public void run() {
-                logger.log(Level.FINE, "Set local value of {0}", objectLocal);
+                logger.log(Level.FINE, "Set local value to {0}", val);
                 final T oldObject = objectLocal;
+                changing = true;
                 objectLocal = val;
                 final T sceneObject = duplicateObject(val);
                 notifyListeners(PROP_USER_CHANGE, oldObject, objectLocal);
                 SceneApplication.getApplication().enqueue(new Callable<Void>() {
                     public Void call() throws Exception {
-                        setSuperValue(sceneObject);
+                        mutex.postWriteRequest(new Runnable() {
+                            public void run() {
+                                setSuperValue(sceneObject);
+                                changing = false;
+                            }
+                        });
                         return null;
                     }
                 });
@@ -309,8 +323,9 @@ public class SceneExplorerProperty<T> extends PropertySupport.Reflection<T> {
     private void setSuperValue(T val, boolean undo) {
         try {
             if (undo) {
-                logger.log(Level.FINE, "Add undo for {0} on thread {1}");
-                addUndo(duplicateObject(getSuperValue()), val);
+                T dupe = duplicateObject(getSuperValue());
+                logger.log(Level.FINE, "Add undo for {0}", dupe);
+                addUndo(dupe, val);
             }
             logger.log(Level.FINE, "Set super value on thread {0}", Thread.currentThread().getName());
             super.setValue(val);
